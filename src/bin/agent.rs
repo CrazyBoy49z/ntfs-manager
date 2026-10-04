@@ -98,9 +98,7 @@ fn main() -> Result<()> {
                             .unwrap_or(0)
                             .saturating_add(1);
                         let exponent = failures.saturating_sub(1).min(4);
-                        let delay_secs = 15_u64
-                            .saturating_mul(1_u64 << exponent)
-                            .min(300);
+                        let delay_secs = 15_u64.saturating_mul(1_u64 << exponent).min(300);
 
                         error!(
                             "auto-mount failed for /dev/{}: {err:#}; retrying in {}s",
@@ -109,10 +107,7 @@ fn main() -> Result<()> {
 
                         retry_after.insert(
                             volume.device.clone(),
-                            (
-                                failures,
-                                Instant::now() + Duration::from_secs(delay_secs),
-                            ),
+                            (failures, Instant::now() + Duration::from_secs(delay_secs)),
                         );
                     }
                 }
