@@ -5,7 +5,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${1:-"$ROOT/dist/NTFS Manager.app"}"
 BINARY_DIR="${NTFS_MANAGER_BINARY_DIR:-"$ROOT/target/release"}"
 ICON_WORK="$ROOT/dist/icon-build"
-ICON_SOURCE="$ROOT/assets/NTFSManager.png"
+ICON_ORIGINAL="$ROOT/assets/NTFSManager.png"
+ICON_SOURCE="$ICON_WORK/NTFSManager-transparent.png"
 ICONSET="$ICON_WORK/NTFSManager.iconset"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -30,6 +31,7 @@ for binary in ntfs-manager-helper ntfs-manager-agent ntfs-manager; do
 done
 
 install -m 0755     "$ROOT/scripts/bootstrap.command"     "$APP/Contents/Resources/bootstrap.command"
+install -m 0755     "$ROOT/scripts/repair-components.sh"     "$APP/Contents/Resources/repair-components.sh"
 
 install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.helper.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.helper.plist"
 
@@ -38,7 +40,8 @@ install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.agent.plist"     "$A
 install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.menubar.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.menubar.plist"
 
 # Build the macOS icon set from the approved project artwork.
-test -s "$ICON_SOURCE"
+test -s "$ICON_ORIGINAL"
+python3 "$ROOT/scripts/make-transparent-logo.py" "$ICON_ORIGINAL" "$ICON_SOURCE"
 
 make_icon() {
     local size="$1"
@@ -82,9 +85,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.9</string>
+    <string>0.4.0</string>
     <key>CFBundleVersion</key>
-    <string>12</string>
+    <string>13</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
     <key>LSUIElement</key>
