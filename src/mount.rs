@@ -3,6 +3,8 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
+    thread,
+    time::{Duration, Instant},
 };
 
 use anyhow::{bail, Context, Result};
@@ -117,9 +119,40 @@ impl MountManager {
             volume_option.as_str(),
         ];
 
-        let output = self
+        let mut output = self
             .privileged_output(&binary, args)
             .with_context(|| format!("failed to execute ntfs-3g at {}", binary.display()))?;
+
+        for retry in 0..3 {
+            if output.status.success() {
+                break;
+            }
+
+            if !is_resource_busy(&output) {
+                self.cleanup_empty_mount_point(&mount_point);
+                return Err(mount_error(device, &output));
+            }
+
+            if retry == 2 {
+                self.cleanup_empty_mount_point(&mount_point);
+                return Err(mount_error(device, &output));
+            }
+
+            if self
+                .disks
+                .ntfs_volume(device)
+                .map(|volume| volume.mounted)
+                .unwrap_or(false)
+            {
+                self.unmount(device)?;
+            } else {
+                thread::sleep(Duration::from_millis(350 * (retry + 1) as u64));
+            }
+
+            output = self
+                .privileged_output(&binary, args)
+                .with_context(|| format!("failed to retry ntfs-3g at {}", binary.display()))?;
+        }
 
         if !output.status.success() {
             self.cleanup_empty_mount_point(&mount_point);
@@ -153,16 +186,43 @@ impl MountManager {
             .output()
             .with_context(|| format!("failed to execute diskutil unmount {dev_path}"))?;
 
-        if output.status.success() {
-            return Ok(());
-        }
-
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if stderr.to_ascii_lowercase().contains("not mounted") {
-            return Ok(());
+        if !output.status.success()
+            && !stderr.to_ascii_lowercase().contains("not mounted")
+        {
+            bail!("failed to unmount {dev_path}: {}", stderr.trim());
         }
 
-        bail!("failed to unmount {dev_path}: {}", stderr.trim())
+        self.wait_until_unmounted(device, Duration::from_secs(3))?;
+
+        // diskutil can report success slightly before the kernel releases the
+        // device exclusively. A short settle period prevents ntfs-3g from
+        // immediately receiving EBUSY after a successful unmount.
+        thread::sleep(Duration::from_millis(250));
+
+        Ok(())
+    }
+
+    fn wait_until_unmounted(&self, device: &str, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            match self.disks.ntfs_volume(device) {
+                Ok(volume) if !volume.mounted => return Ok(()),
+                Ok(_) => {}
+                Err(err) => {
+                    if Instant::now() >= deadline {
+                        return Err(err).context("failed to verify NTFS unmount state");
+                    }
+                }
+            }
+
+            if Instant::now() >= deadline {
+                bail!("/dev/{device} is still mounted after waiting for diskutil");
+            }
+
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     fn ensure_mount_point(&self, path: &Path) -> Result<()> {
@@ -233,6 +293,16 @@ impl MountManager {
     }
 }
 
+fn is_resource_busy(output: &Output) -> bool {
+    let stderr = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    let stdout = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+
+    stderr.contains("resource busy")
+        || stdout.contains("resource busy")
+        || stderr.contains("already exclusively opened")
+        || stdout.contains("already exclusively opened")
+}
+
 fn mount_error(device: &str, output: &Output) -> anyhow::Error {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -248,6 +318,12 @@ fn mount_error(device: &str, output: &Output) -> anyhow::Error {
     {
         anyhow::anyhow!(
             "macFUSE is installed but not ready. Allow macFUSE in System Settings → Privacy & Security and restart the Mac, then try again.\n{detail}"
+        )
+    } else if lowered.contains("resource busy")
+        || lowered.contains("already exclusively opened")
+    {
+        anyhow::anyhow!(
+            "cannot mount /dev/{device} read/write because macOS or another process still has the NTFS device open. NTFS Manager retried after unmounting it, but the device remained busy. Close Disk Utility or other disk tools, then try again.\n{detail}"
         )
     } else if lowered.contains("hibernat")
         || lowered.contains("fast restart")
