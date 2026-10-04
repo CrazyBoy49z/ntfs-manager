@@ -50,12 +50,7 @@ impl MountManager {
         device: &str,
         requested_mount_point: Option<&Path>,
     ) -> Result<MountedVolume> {
-        self.mount_for_user(
-            device,
-            requested_mount_point,
-            current_uid(),
-            current_gid(),
-        )
+        self.mount_for_user(device, requested_mount_point, current_uid(), current_gid())
     }
 
     pub fn mount_for_user(
