@@ -56,10 +56,9 @@ impl DiskService {
                 continue;
             }
 
-            if let Ok(volume) = self.volume_info(device) {
-                if volume.is_ntfs {
-                    volumes.push(volume.into_public());
-                }
+            match self.volume_info(device) {
+                Ok(volume) if volume.is_ntfs => volumes.push(volume.into_public()),
+                _ => {}
             }
         }
 
