@@ -12,7 +12,7 @@ NTFS Manager ships with its approved drive-based app artwork in `assets/NTFSMana
 4. Open **NTFS Manager.app**.
 5. If it is not already in `/Applications`, choose **Move to Applications…** from the menu-bar app. NTFS Manager copies/moves itself to `/Applications`, relaunches there, and continues setup.
 
-On first launch, NTFS Manager automatically opens its setup in Terminal and installs:
+On first launch, NTFS Manager automatically starts its setup through Terminal and installs or repairs the required components. The bundled `bootstrap.command` is executed through `/bin/bash`; it is no longer opened as a Finder document, so Gatekeeper does not separately block the internal setup script.
 
 - Homebrew, only when Homebrew is missing;
 - macFUSE;
@@ -68,7 +68,7 @@ The app bundle itself contains the helper, agent and CLI binaries under `Content
 
 ## Menu-bar actions
 
-The menu is rebuilt from the current disk state and shows each NTFS volume separately.
+The menu reflects the current disk state and shows each NTFS volume separately. Periodic background scans no longer rebuild an unchanged open menu, preventing the tray popup from closing itself every few seconds.
 
 - Native **Auto-mount NTFS volumes** checkbox.
 - Per-volume submenu with:
@@ -80,7 +80,7 @@ The menu is rebuilt from the current disk state and shows each NTFS volume separ
 - **Mount all read/write** and **Unmount all** appear when multiple NTFS volumes are connected.
 - **Refresh**.
 - **Move to Applications…** when the app is running from Downloads/Desktop or another location.
-- **Install / Repair Components…**.
+- Component repair is automatic when the helper is missing or has the wrong version.
 - **Open Logs**.
 - Version display.
 - **Quit NTFS Manager**.
@@ -153,6 +153,7 @@ Default:
 /var/log/ntfs-manager-helper.log
 ~/Library/Logs/NTFS Manager/agent.log
 ~/Library/Logs/NTFS Manager/menubar.log
+~/Library/Logs/NTFS Manager/setup.log
 ```
 
 ## Development

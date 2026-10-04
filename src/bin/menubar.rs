@@ -59,7 +59,6 @@ struct MenuState {
     unmount_all: MenuItem,
     refresh: MenuItem,
     move_to_applications: MenuItem,
-    install_repair: MenuItem,
     open_logs: MenuItem,
     quit: MenuItem,
     volumes: Vec<VolumeMenuActions>,
@@ -82,6 +81,7 @@ struct App {
     refresh_in_flight: bool,
     action_in_flight: bool,
     status_override: Option<(String, Instant)>,
+    last_menu_fingerprint: Option<String>,
 }
 
 impl App {
@@ -97,6 +97,7 @@ impl App {
             refresh_in_flight: false,
             action_in_flight: false,
             status_override: None,
+            last_menu_fingerprint: None,
         }
     }
 
@@ -198,15 +199,10 @@ impl App {
 
         let separator2 = PredefinedMenuItem::separator();
         let app_header2 = PredefinedMenuItem::section_header("Application");
-        let refresh = MenuItem::new("Refresh", !self.refresh_in_flight, None);
+        let refresh = MenuItem::new("Refresh", true, None);
         let move_to_applications = MenuItem::new(
             "Move to Applications…",
             !installed && !self.action_in_flight,
-            None,
-        );
-        let install_repair = MenuItem::new(
-            "Install / Repair Components…",
-            installed && !self.action_in_flight,
             None,
         );
         let open_logs = MenuItem::new("Open Logs", true, None);
@@ -246,7 +242,6 @@ impl App {
         }
 
         builder = builder
-            .item(&install_repair)
             .item(&open_logs)
             .item(&separator3)
             .item(&version)
@@ -264,7 +259,6 @@ impl App {
             unmount_all,
             refresh,
             move_to_applications,
-            install_repair,
             open_logs,
             quit,
             volumes: volume_actions,
@@ -279,10 +273,6 @@ impl App {
         }
 
         self.refresh_in_flight = true;
-
-        if let Some(menu) = self.menu.as_ref() {
-            menu.refresh.set_enabled(false);
-        }
 
         let disks = self.disks.clone();
         let helper = self.helper.clone();
@@ -358,8 +348,12 @@ impl App {
             None => default_status,
         };
 
-        if let Err(err) = self.rebuild_menu(&status, helper_current) {
-            eprintln!("failed to rebuild tray menu: {err:#}");
+        let fingerprint = self.menu_fingerprint(&status, helper_current);
+        if self.last_menu_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+            match self.rebuild_menu(&status, helper_current) {
+                Ok(()) => self.last_menu_fingerprint = Some(fingerprint),
+                Err(err) => eprintln!("failed to rebuild tray menu: {err:#}"),
+            }
         }
 
         if let Some(tray) = self.tray.as_ref() {
@@ -378,12 +372,64 @@ impl App {
             bail!("move NTFS Manager.app to /Applications first");
         }
 
-        Command::new("/usr/bin/open")
+        let script = r#"
+on run argv
+    set setupPath to item 1 of argv
+    tell application "Terminal"
+        activate
+        do script "/bin/bash " & quoted form of setupPath & "; exit"
+    end tell
+end run
+"#;
+
+        let output = Command::new("/usr/bin/osascript")
+            .args(["-e", script, "--"])
             .arg(&setup)
-            .spawn()
-            .context("failed to open first-run setup in Terminal")?;
+            .output()
+            .context("failed to start automatic component setup")?;
+
+        if !output.status.success() {
+            bail!(
+                "failed to start component setup: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
 
         Ok(())
+    }
+
+    fn menu_fingerprint(&self, status: &str, helper_current: bool) -> String {
+        let settings = Settings::load().unwrap_or_default();
+        let mut fingerprint = format!(
+            "{}|{}|{}|{}|{}",
+            status,
+            helper_current,
+            is_installed_in_applications(),
+            settings.auto_mount,
+            self.action_in_flight
+        );
+
+        for volume in &self.volumes {
+            fingerprint.push('|');
+            fingerprint.push_str(&volume.device);
+            fingerprint.push('|');
+            fingerprint.push_str(volume.name.as_deref().unwrap_or(""));
+            fingerprint.push('|');
+            fingerprint.push_str(if volume.mounted { "1" } else { "0" });
+            fingerprint.push('|');
+            fingerprint.push_str(if volume.writable { "1" } else { "0" });
+            fingerprint.push('|');
+            fingerprint.push_str(volume.mount_point.as_deref().unwrap_or(""));
+            fingerprint.push('|');
+            fingerprint.push_str(
+                &volume
+                    .size_bytes
+                    .map(|size| size.to_string())
+                    .unwrap_or_default(),
+            );
+        }
+
+        fingerprint
     }
 
     fn start_mount_devices(&mut self, targets: Vec<String>, label: String) {
@@ -538,7 +584,6 @@ impl App {
             is_quit,
             is_refresh,
             is_move,
-            is_install_repair,
             is_open_logs,
             is_auto_mount,
             is_mount_all,
@@ -574,7 +619,6 @@ impl App {
                 event.id() == menu.quit.id(),
                 event.id() == menu.refresh.id(),
                 event.id() == menu.move_to_applications.id(),
-                event.id() == menu.install_repair.id(),
                 event.id() == menu.open_logs.id(),
                 event.id() == menu.auto_mount.id(),
                 event.id() == menu.mount_all.id(),
@@ -616,26 +660,6 @@ impl App {
 
         if is_move {
             self.start_move_to_applications();
-            return;
-        }
-
-        if is_install_repair {
-            match self.launch_setup() {
-                Ok(()) => {
-                    self.setup_launched = true;
-                    self.status_override = Some((
-                        "Setup opened in Terminal".to_string(),
-                        Instant::now() + Duration::from_secs(10),
-                    ));
-                }
-                Err(err) => {
-                    self.status_override = Some((
-                        format!("Setup error: {err}"),
-                        Instant::now() + Duration::from_secs(30),
-                    ));
-                }
-            }
-            self.request_refresh();
             return;
         }
 
