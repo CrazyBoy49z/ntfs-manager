@@ -294,8 +294,9 @@ impl App {
 
         let panel_width = window.outer_size().width as f64;
         let panel_height = window.outer_size().height as f64;
-        let mut x = rect.position.x + (rect.size.width / 2.0) - (panel_width / 2.0);
-        let mut y = rect.position.y + rect.size.height + 5.0;
+        let mut x =
+            rect.position.x + (f64::from(rect.size.width) / 2.0) - (panel_width / 2.0);
+        let mut y = rect.position.y + f64::from(rect.size.height) + 5.0;
 
         if let Some(monitor) = window.current_monitor() {
             let position = monitor.position();
@@ -713,7 +714,7 @@ end run
 }
 
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace(''', "'\\''"))
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn set_launch_at_login(enabled: bool) -> Result<()> {
