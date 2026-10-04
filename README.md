@@ -2,15 +2,53 @@
 
 Safe NTFS read/write support for macOS, written in Rust and powered by **macFUSE + ntfs-3g**.
 
-NTFS Manager does not replace Apple's `/sbin/mount_ntfs`, does not disable SIP, and does not silently force-mount dirty or hibernated NTFS volumes.
+## Install — normal users
 
-## Components
+1. Open **GitHub Releases**.
+2. Download `NTFS-Manager-vX.Y.Z-macOS-universal.zip`.
+3. Unzip it.
+4. Drag **NTFS Manager.app** to `/Applications`.
+5. Open **NTFS Manager**.
 
-- `ntfs-manager` — CLI for diagnostics, listing, manual mount/unmount, and foreground watch mode.
-- `ntfs-manager-helper` — root-only launchd helper with a narrow Unix-socket protocol.
-- `ntfs-manager-agent` — per-user background auto-mount agent.
-- `ntfs-manager-menubar` — native macOS menu-bar app.
-- `NTFS Manager.app` — LSUIElement app bundle with no Dock icon.
+On first launch, NTFS Manager automatically opens its setup in Terminal and installs:
+
+- Homebrew, only when Homebrew is missing;
+- macFUSE;
+- `gromgit/fuse`;
+- `gromgit/fuse/ntfs-3g-mac`;
+- the NTFS Manager privileged helper;
+- the background auto-mount agent;
+- login startup configuration.
+
+No Rust toolchain, `git clone`, or `cargo build` is required for release users.
+
+The release is a **Universal macOS app** containing both Intel `x86_64` and Apple Silicon `arm64` binaries.
+
+### macFUSE approval
+
+macOS can require manual approval of the macFUSE system extension in:
+
+**System Settings → Privacy & Security**
+
+A reboot can also be required. macOS intentionally does not allow an app to bypass this security approval.
+
+### Gatekeeper
+
+Development builds are ad-hoc signed. Until a Developer ID certificate and notarization are configured, macOS can show an **unidentified developer** warning for a downloaded release. In that case use **Control-click → Open** once.
+
+## What the app installs
+
+```text
+/Applications/NTFS Manager.app
+/usr/local/bin/ntfs-manager
+/usr/local/libexec/ntfs-manager/ntfs-manager-helper
+/usr/local/libexec/ntfs-manager/ntfs-manager-agent
+/Library/LaunchDaemons/dev.step2.ntfs-manager.helper.plist
+~/Library/LaunchAgents/dev.step2.ntfs-manager.agent.plist
+~/Library/LaunchAgents/dev.step2.ntfs-manager.menubar.plist
+```
+
+The app bundle itself contains the helper, agent and CLI binaries under `Contents/Resources/bin`. The first-run setup installs those exact bundled binaries; it does not download executable NTFS Manager components separately.
 
 ## Menu-bar actions
 
@@ -20,6 +58,7 @@ NTFS Manager does not replace Apple's `/sbin/mount_ntfs`, does not disable SIP, 
 - Unmount all.
 - Open the first mounted NTFS volume in Finder.
 - Refresh.
+- Install / Repair Components.
 - Quit.
 
 ## Security model
@@ -30,25 +69,20 @@ The privileged helper:
 - listens on `/var/run/dev.step2.ntfs-manager.sock`;
 - exposes only `ping`, `mount`, and `unmount`;
 - validates device identifiers like `disk4s1`;
+- restricts unmount operations to NTFS volumes;
 - allows mount points only as direct children of `/Volumes`;
 - rejects symlink mount points;
-- reads the caller UID/GID from the Unix socket using `getpeereid` instead of trusting client-supplied identity data;
+- reads the caller UID/GID from the Unix socket using `getpeereid`;
 - exposes its socket only to the macOS `admin` group;
 - never enables ntfs-3g `force` or `remove_hiberfile` automatically.
 
-If Windows Fast Startup/hibernation or an unclean NTFS state is detected, mounting stops with an error.
+NTFS Manager does not replace Apple's `/sbin/mount_ntfs` and does not disable SIP.
 
-## Requirements
+If Windows Fast Startup/hibernation or an unclean NTFS state is detected, mounting stops with an error rather than forcing a risky write mount.
 
-- macOS 11+
-- Intel or Apple Silicon Mac
-- Rust 1.80+ when building from source
-- Homebrew
-- macFUSE
-- ntfs-3g-mac
-- current user in the macOS `admin` group
+## Dependencies installed by first-run setup
 
-Install dependencies:
+Equivalent Homebrew commands are:
 
 ```bash
 brew install --cask macfuse
@@ -56,19 +90,11 @@ brew tap gromgit/fuse
 brew install gromgit/fuse/ntfs-3g-mac
 ```
 
-Approve macFUSE in **System Settings → Privacy & Security** if macOS requests it, then reboot.
-
-## Install
-
-```bash
-git clone https://github.com/CrazyBoy49z/ntfs-manager.git
-cd ntfs-manager
-bash scripts/install.sh
-```
-
-The installer builds all Rust binaries, creates `NTFS Manager.app`, installs the helper under `/usr/local/libexec/ntfs-manager`, installs the CLI as `/usr/local/bin/ntfs-manager`, and bootstraps the LaunchDaemon/LaunchAgents.
+If Homebrew is missing, the setup uses Homebrew's official installer first.
 
 ## CLI
+
+After setup:
 
 ```bash
 ntfs-manager doctor
@@ -78,15 +104,11 @@ ntfs-manager status
 ntfs-manager status disk4s1
 ntfs-manager mount disk4s1
 ntfs-manager unmount disk4s1
-ntfs-manager watch
-ntfs-manager watch --auto-mount
 ```
 
-Manual CLI mounting still uses `sudo`. Background auto-mount uses the installed privileged helper and does not need an interactive sudo prompt.
+Manual CLI mounting can request `sudo`. Background auto-mount uses the installed privileged helper and does not require a sudo prompt for each disk.
 
 ## Settings
-
-User configuration:
 
 ```text
 ~/Library/Application Support/NTFS Manager/config.json
@@ -101,8 +123,6 @@ Default:
 }
 ```
 
-The menu-bar app updates `auto_mount` directly. The agent reloads settings while running.
-
 ## Logs
 
 ```text
@@ -111,15 +131,9 @@ The menu-bar app updates `auto_mount` directly. The agent reloads settings while
 ~/Library/Logs/NTFS Manager/menubar.log
 ```
 
-## Uninstall
-
-```bash
-bash scripts/uninstall.sh
-```
-
-The uninstaller keeps the user's settings directory intentionally.
-
 ## Development
+
+Source builds still require Rust:
 
 ```bash
 cargo fmt --all -- --check
@@ -129,13 +143,23 @@ cargo build --release --all-features
 bash -n scripts/*.sh
 ```
 
-## Roadmap
+Build an app from the current host architecture:
 
-- Replace polling with Disk Arbitration callbacks.
-- Signed/notarized release builds.
-- Homebrew tap.
-- Per-volume preferences and allow/deny lists.
-- Release installer package.
+```bash
+bash scripts/package-app.sh
+```
+
+GitHub CI additionally cross-compiles Intel and Apple Silicon targets and verifies the Universal app bundle.
+
+## Uninstall
+
+From a source checkout:
+
+```bash
+bash scripts/uninstall.sh
+```
+
+User settings are intentionally retained.
 
 ## License
 

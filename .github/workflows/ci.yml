@@ -33,5 +33,47 @@ jobs:
           plutil -lint /tmp/ntfs-agent.plist
           plutil -lint /tmp/ntfs-menubar.plist
 
-      - name: Build app bundle
+      - name: Build host app bundle
         run: bash scripts/package-app.sh
+
+      - name: Verify app signature
+        run: codesign --verify --deep --strict "dist/NTFS Manager.app"
+
+  universal:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: universal
+
+      - name: Build Apple Silicon
+        run: cargo build --release --all-features --target aarch64-apple-darwin
+
+      - name: Build Intel
+        run: cargo build --release --all-features --target x86_64-apple-darwin
+
+      - name: Create universal binaries
+        run: |
+          mkdir -p universal-bin
+          for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent ntfs-manager-menubar; do
+            lipo -create               "target/aarch64-apple-darwin/release/$binary"               "target/x86_64-apple-darwin/release/$binary"               -output "universal-bin/$binary"
+            chmod +x "universal-bin/$binary"
+            lipo -info "universal-bin/$binary"
+          done
+
+      - name: Package universal app
+        env:
+          NTFS_MANAGER_BINARY_DIR: ${{ github.workspace }}/universal-bin
+        run: bash scripts/package-app.sh
+
+      - name: Verify universal app
+        run: |
+          codesign --verify --deep --strict "dist/NTFS Manager.app"
+          lipo -info "dist/NTFS Manager.app/Contents/MacOS/ntfs-manager-menubar"
+          for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent; do
+            lipo -info "dist/NTFS Manager.app/Contents/Resources/bin/$binary"
+          done
