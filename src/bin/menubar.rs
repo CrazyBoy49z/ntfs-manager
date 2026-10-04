@@ -24,7 +24,7 @@ enum UserEvent {
     Menu(MenuEvent),
     Tick,
     Snapshot {
-        volumes: Result<Vec<NtfsVolume>, String>,
+        volumes: std::result::Result<Vec<NtfsVolume>, String>,
         helper_ready: bool,
     },
     ActionCompleted {
@@ -156,7 +156,11 @@ impl App {
         });
     }
 
-    fn apply_snapshot(&mut self, volumes: Result<Vec<NtfsVolume>, String>, helper_ready: bool) {
+    fn apply_snapshot(
+        &mut self,
+        volumes: std::result::Result<Vec<NtfsVolume>, String>,
+        helper_ready: bool,
+    ) {
         self.refresh_in_flight = false;
 
         let Some(menu) = self.menu.as_ref() else {
