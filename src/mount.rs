@@ -179,7 +179,10 @@ impl MountManager {
         }
 
         let output = self
-            .privileged_output("/bin/mkdir", ["-p", path.to_str().context("invalid mount point")?])
+            .privileged_output(
+                "/bin/mkdir",
+                ["-p", path.to_str().context("invalid mount point")?],
+            )
             .with_context(|| format!("failed to create mount point {}", path.display()))?;
 
         if !output.status.success() {
