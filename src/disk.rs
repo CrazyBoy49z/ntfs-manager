@@ -1,0 +1,222 @@
+use std::process::Command;
+
+use anyhow::{bail, Context, Result};
+use plist::Value;
+use serde::Serialize;
+
+#[derive(Clone, Debug, Default)]
+pub struct DiskService;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct NtfsVolume {
+    pub device: String,
+    pub name: Option<String>,
+    pub mounted: bool,
+    pub writable: bool,
+    pub mount_point: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub internal: Option<bool>,
+    pub removable: Option<bool>,
+}
+
+impl DiskService {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn ntfs_volumes(&self) -> Result<Vec<NtfsVolume>> {
+        let output = Command::new("/usr/sbin/diskutil")
+            .args(["list", "-plist"])
+            .output()
+            .context("failed to execute diskutil list")?;
+
+        if !output.status.success() {
+            bail!(
+                "diskutil list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+
+        let plist = Value::from_reader_xml(output.stdout.as_slice())
+            .context("failed to parse diskutil list plist")?;
+
+        let devices = plist
+            .as_dictionary()
+            .and_then(|dict| dict.get("AllDisks"))
+            .and_then(Value::as_array)
+            .context("diskutil list did not return AllDisks")?;
+
+        let mut volumes = Vec::new();
+        for value in devices {
+            let Some(device) = value.as_string() else {
+                continue;
+            };
+
+            if !is_partition_identifier(device) {
+                continue;
+            }
+
+            if let Ok(volume) = self.volume_info(device) {
+                if volume.is_ntfs {
+                    volumes.push(volume.into_public());
+                }
+            }
+        }
+
+        volumes.sort_by(|a, b| a.device.cmp(&b.device));
+        Ok(volumes)
+    }
+
+    pub fn ntfs_volume(&self, device: &str) -> Result<NtfsVolume> {
+        validate_device_identifier(device)?;
+        let info = self.volume_info(device)?;
+
+        if !info.is_ntfs {
+            bail!("/dev/{device} is not an NTFS volume");
+        }
+
+        Ok(info.into_public())
+    }
+
+    fn volume_info(&self, device: &str) -> Result<VolumeInfo> {
+        validate_device_identifier(device)?;
+
+        let dev_path = format!("/dev/{device}");
+        let output = Command::new("/usr/sbin/diskutil")
+            .args(["info", "-plist", &dev_path])
+            .output()
+            .with_context(|| format!("failed to execute diskutil info for {dev_path}"))?;
+
+        if !output.status.success() {
+            bail!(
+                "diskutil info failed for {dev_path}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+
+        let plist = Value::from_reader_xml(output.stdout.as_slice())
+            .with_context(|| format!("failed to parse diskutil info for {dev_path}"))?;
+        let dict = plist
+            .as_dictionary()
+            .context("diskutil info did not return a dictionary")?;
+
+        let filesystem_type = string_value(dict, "FilesystemType");
+        let filesystem_name = string_value(dict, "FilesystemName");
+        let content = string_value(dict, "Content");
+
+        let is_ntfs = [
+            filesystem_type.as_deref(),
+            filesystem_name.as_deref(),
+            content.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|value| value.to_ascii_lowercase().contains("ntfs"));
+
+        Ok(VolumeInfo {
+            device: string_value(dict, "DeviceIdentifier").unwrap_or_else(|| device.to_string()),
+            name: string_value(dict, "VolumeName").filter(|value| !value.is_empty()),
+            mounted: bool_value(dict, "Mounted").unwrap_or(false),
+            writable: bool_value(dict, "Writable").unwrap_or(false),
+            mount_point: string_value(dict, "MountPoint").filter(|value| !value.is_empty()),
+            size_bytes: integer_value(dict, "TotalSize"),
+            internal: bool_value(dict, "Internal"),
+            removable: bool_value(dict, "RemovableMedia"),
+            is_ntfs,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct VolumeInfo {
+    device: String,
+    name: Option<String>,
+    mounted: bool,
+    writable: bool,
+    mount_point: Option<String>,
+    size_bytes: Option<u64>,
+    internal: Option<bool>,
+    removable: Option<bool>,
+    is_ntfs: bool,
+}
+
+impl VolumeInfo {
+    fn into_public(self) -> NtfsVolume {
+        NtfsVolume {
+            device: self.device,
+            name: self.name,
+            mounted: self.mounted,
+            writable: self.writable,
+            mount_point: self.mount_point,
+            size_bytes: self.size_bytes,
+            internal: self.internal,
+            removable: self.removable,
+        }
+    }
+}
+
+fn string_value(dict: &plist::Dictionary, key: &str) -> Option<String> {
+    dict.get(key)
+        .and_then(Value::as_string)
+        .map(ToOwned::to_owned)
+}
+
+fn bool_value(dict: &plist::Dictionary, key: &str) -> Option<bool> {
+    dict.get(key).and_then(Value::as_boolean)
+}
+
+fn integer_value(dict: &plist::Dictionary, key: &str) -> Option<u64> {
+    dict.get(key).and_then(Value::as_unsigned_integer).or_else(|| {
+        dict.get(key)
+            .and_then(Value::as_signed_integer)
+            .and_then(|value| u64::try_from(value).ok())
+    })
+}
+
+pub fn validate_device_identifier(device: &str) -> Result<()> {
+    if is_partition_identifier(device) {
+        Ok(())
+    } else {
+        bail!("invalid device identifier '{device}'; expected format like disk4s1")
+    }
+}
+
+fn is_partition_identifier(device: &str) -> bool {
+    let Some(rest) = device.strip_prefix("disk") else {
+        return false;
+    };
+
+    let Some((disk, slice)) = rest.split_once('s') else {
+        return false;
+    };
+
+    !disk.is_empty()
+        && !slice.is_empty()
+        && disk.bytes().all(|byte| byte.is_ascii_digit())
+        && slice.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_partition_identifiers() {
+        assert!(validate_device_identifier("disk4s1").is_ok());
+        assert!(validate_device_identifier("disk12s3").is_ok());
+    }
+
+    #[test]
+    fn rejects_unsafe_or_whole_disk_identifiers() {
+        for device in [
+            "disk4",
+            "/dev/disk4s1",
+            "disk4s1;rm",
+            "../disk4s1",
+            "diskXsY",
+            "",
+        ] {
+            assert!(validate_device_identifier(device).is_err(), "{device}");
+        }
+    }
+}
