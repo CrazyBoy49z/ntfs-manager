@@ -1,4 +1,4 @@
-use std::{process::Command, thread, time::Duration};
+use std::{path::PathBuf, process::Command, thread, time::Duration};
 
 use anyhow::{Context, Result};
 use ntfs_manager::{
@@ -32,6 +32,7 @@ struct MenuState {
     unmount_all: MenuItem,
     open_first: MenuItem,
     refresh: MenuItem,
+    install_repair: MenuItem,
     quit: MenuItem,
 }
 
@@ -41,6 +42,7 @@ struct App {
     tray: Option<TrayIcon>,
     menu: Option<MenuState>,
     volumes: Vec<NtfsVolume>,
+    setup_launched: bool,
 }
 
 impl Default for App {
@@ -51,6 +53,7 @@ impl Default for App {
             tray: None,
             menu: None,
             volumes: Vec::new(),
+            setup_launched: false,
         }
     }
 }
@@ -63,6 +66,7 @@ impl App {
         let unmount_all = MenuItem::new("Unmount all", true, None);
         let open_first = MenuItem::new("Open first mounted volume", true, None);
         let refresh = MenuItem::new("Refresh", true, None);
+        let install_repair = MenuItem::new("Install / Repair Components", true, None);
         let quit = MenuItem::new("Quit NTFS Manager", true, None);
 
         let separator1 = PredefinedMenuItem::separator();
@@ -82,6 +86,7 @@ impl App {
                 &open_first,
                 &refresh,
                 &separator3,
+                &install_repair,
                 &quit,
             ])
             .build()
@@ -101,10 +106,12 @@ impl App {
             unmount_all,
             open_first,
             refresh,
+            install_repair,
             quit,
         });
         self.tray = Some(tray);
         self.refresh();
+        self.ensure_setup();
 
         Ok(())
     }
@@ -157,6 +164,50 @@ impl App {
         }
     }
 
+    fn ensure_setup(&mut self) {
+        if self.helper.ping().is_ok() {
+            return;
+        }
+
+        let Some(menu) = self.menu.as_ref() else {
+            return;
+        };
+
+        menu.status.set_text("Setup required");
+
+        if !self.setup_launched {
+            match self.launch_setup() {
+                Ok(()) => {
+                    self.setup_launched = true;
+                    menu.status.set_text("Setup opened in Terminal");
+                }
+                Err(err) => {
+                    menu.status.set_text(format!("Setup error: {err}"));
+                }
+            }
+        }
+    }
+
+    fn launch_setup(&self) -> Result<()> {
+        let setup = setup_script_path()?;
+
+        if !setup.exists() {
+            anyhow::bail!("bootstrap.command is missing from app resources");
+        }
+
+        let app = current_app_path()?;
+        if app != PathBuf::from("/Applications/NTFS Manager.app") {
+            anyhow::bail!("move NTFS Manager.app to /Applications first");
+        }
+
+        Command::new("/usr/bin/open")
+            .arg(&setup)
+            .spawn()
+            .context("failed to open first-run setup in Terminal")?;
+
+        Ok(())
+    }
+
     fn handle_menu(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
         let Some(menu) = self.menu.as_ref() else {
             return;
@@ -169,6 +220,15 @@ impl App {
 
         if event.id() == menu.refresh.id() {
             self.refresh();
+            self.ensure_setup();
+            return;
+        }
+
+        if event.id() == menu.install_repair.id() {
+            match self.launch_setup() {
+                Ok(()) => menu.status.set_text("Setup opened in Terminal"),
+                Err(err) => menu.status.set_text(format!("Setup error: {err}")),
+            }
             return;
         }
 
@@ -259,7 +319,10 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Menu(event) => self.handle_menu(event_loop, event),
-            UserEvent::Tick => self.refresh(),
+            UserEvent::Tick => {
+                self.refresh();
+                self.ensure_setup();
+            },
         }
     }
 
@@ -270,6 +333,29 @@ impl ApplicationHandler<UserEvent> for App {
         _event: WindowEvent,
     ) {
     }
+}
+
+fn current_app_path() -> Result<PathBuf> {
+    let executable = std::env::current_exe().context("failed to locate current executable")?;
+    let macos_dir = executable
+        .parent()
+        .context("invalid app executable path")?;
+    let contents_dir = macos_dir
+        .parent()
+        .context("invalid app Contents path")?;
+    let app = contents_dir
+        .parent()
+        .context("invalid app bundle path")?;
+
+    Ok(app.to_path_buf())
+}
+
+fn setup_script_path() -> Result<PathBuf> {
+    let app = current_app_path()?;
+    Ok(app
+        .join("Contents")
+        .join("Resources")
+        .join("bootstrap.command"))
 }
 
 fn main() -> Result<()> {
