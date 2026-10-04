@@ -101,16 +101,11 @@ impl DiskService {
 
         let filesystem_type = string_value(dict, "FilesystemType");
         let filesystem_name = string_value(dict, "FilesystemName");
-        let content = string_value(dict, "Content");
 
-        let is_ntfs = [
+        let is_ntfs = is_ntfs_filesystem(
             filesystem_type.as_deref(),
             filesystem_name.as_deref(),
-            content.as_deref(),
-        ]
-        .into_iter()
-        .flatten()
-        .any(|value| value.to_ascii_lowercase().contains("ntfs"));
+        );
 
         Ok(VolumeInfo {
             device: string_value(dict, "DeviceIdentifier").unwrap_or_else(|| device.to_string()),
@@ -174,6 +169,21 @@ fn integer_value(dict: &plist::Dictionary, key: &str) -> Option<u64> {
         })
 }
 
+fn is_ntfs_filesystem(filesystem_type: Option<&str>, filesystem_name: Option<&str>) -> bool {
+    if filesystem_type
+        .is_some_and(|value| value.eq_ignore_ascii_case("ntfs"))
+    {
+        return true;
+    }
+
+    filesystem_name.is_some_and(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        normalized == "ntfs"
+            || normalized == "windows nt file system (ntfs)"
+            || normalized == "windows ntfs"
+    })
+}
+
 pub fn validate_device_identifier(device: &str) -> Result<()> {
     if is_partition_identifier(device) {
         Ok(())
@@ -200,6 +210,27 @@ fn is_partition_identifier(device: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detects_real_ntfs_filesystems() {
+        assert!(is_ntfs_filesystem(Some("ntfs"), None));
+        assert!(is_ntfs_filesystem(
+            Some("ntfs"),
+            Some("Windows NT File System (NTFS)")
+        ));
+        assert!(is_ntfs_filesystem(
+            None,
+            Some("Windows NT File System (NTFS)")
+        ));
+    }
+
+    #[test]
+    fn rejects_fat_and_exfat_even_for_windows_partition_types() {
+        assert!(!is_ntfs_filesystem(Some("msdos"), Some("MS-DOS FAT32")));
+        assert!(!is_ntfs_filesystem(Some("exfat"), Some("ExFAT")));
+        assert!(!is_ntfs_filesystem(Some("fat32"), Some("FAT32")));
+        assert!(!is_ntfs_filesystem(None, Some("MS-DOS FAT32")));
+    }
 
     #[test]
     fn accepts_partition_identifiers() {
