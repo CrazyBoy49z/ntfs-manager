@@ -1,5 +1,5 @@
 use std::{
-    fs,
+    env, fs,
     path::{Path, PathBuf},
     process::Command,
     thread,
@@ -8,66 +8,80 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use ntfs_manager::{
-    disk::{DiskService, NtfsVolume},
+    disk::{DiskService, DiskVolume},
     helper_client::HelperClient,
+    ntfs3g,
     platform,
     settings::Settings,
 };
+use serde::{Deserialize, Serialize};
 use tray_icon::{
-    menu::{CheckMenuItem, MenuEvent, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder},
-    Icon, TrayIcon, TrayIconBuilder,
+    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 use winit::{
     application::ApplicationHandler,
+    dpi::{LogicalSize, PhysicalPosition},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS},
-    window::WindowId,
+    window::{Window, WindowId, WindowLevel},
 };
+use wry::{WebView, WebViewBuilder};
 
 const APPLICATION_PATH: &str = "/Applications/NTFS Manager.app";
+const PANEL_HTML: &str = include_str!("../../assets/panel.html");
+const PANEL_WIDTH: f64 = 390.0;
+const PANEL_HEIGHT: f64 = 590.0;
 
 #[derive(Debug)]
 enum UserEvent {
-    Menu(MenuEvent),
+    Tray(TrayIconEvent),
+    Ipc(String),
     Tick,
     Snapshot {
-        volumes: std::result::Result<Vec<NtfsVolume>, String>,
+        volumes: std::result::Result<Vec<DiskVolume>, String>,
         helper_version: Option<String>,
     },
     ActionCompleted {
         label: String,
         errors: Vec<String>,
     },
+    SetupCompleted {
+        result: std::result::Result<SetupOutcome, String>,
+    },
     MoveCompleted {
         result: std::result::Result<(), String>,
     },
 }
 
-struct VolumeMenuActions {
-    device: String,
-    name: String,
-    mount_point: Option<String>,
-    mount: MenuItem,
-    open: MenuItem,
-    unmount: MenuItem,
+#[derive(Clone, Debug)]
+enum SetupOutcome {
+    Repaired,
+    FullSetupOpened,
 }
 
-struct MenuState {
-    auto_mount: CheckMenuItem,
-    mount_all: MenuItem,
-    unmount_all: MenuItem,
-    refresh: MenuItem,
-    move_to_applications: MenuItem,
-    open_logs: MenuItem,
-    quit: MenuItem,
-    volumes: Vec<VolumeMenuActions>,
+#[derive(Debug, Deserialize)]
+struct UiCommand {
+    action: String,
+    #[serde(default)]
+    device: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
 }
 
-enum VolumeAction {
-    Mount { device: String, name: String },
-    Open { path: String },
-    Unmount { device: String, name: String },
+#[derive(Serialize)]
+struct UiState<'a> {
+    version: &'static str,
+    summary: String,
+    auto_mount: bool,
+    launch_at_login: bool,
+    check_updates: bool,
+    installed_in_applications: bool,
+    helper_ready: bool,
+    helper_version: Option<&'a str>,
+    action_in_flight: bool,
+    error: Option<String>,
+    volumes: &'a [DiskVolume],
 }
 
 struct App {
@@ -75,13 +89,15 @@ struct App {
     helper: HelperClient,
     proxy: EventLoopProxy<UserEvent>,
     tray: Option<TrayIcon>,
-    menu: Option<MenuState>,
-    volumes: Vec<NtfsVolume>,
-    setup_launched: bool,
+    window: Option<Window>,
+    webview: Option<WebView>,
+    volumes: Vec<DiskVolume>,
+    helper_version: Option<String>,
     refresh_in_flight: bool,
     action_in_flight: bool,
+    setup_in_flight: bool,
+    panel_visible: bool,
     status_override: Option<(String, Instant)>,
-    last_menu_fingerprint: Option<String>,
 }
 
 impl App {
@@ -91,17 +107,19 @@ impl App {
             helper: HelperClient::new(),
             proxy,
             tray: None,
-            menu: None,
+            window: None,
+            webview: None,
             volumes: Vec::new(),
-            setup_launched: false,
+            helper_version: None,
             refresh_in_flight: false,
             action_in_flight: false,
+            setup_in_flight: false,
+            panel_visible: false,
             status_override: None,
-            last_menu_fingerprint: None,
         }
     }
 
-    fn initialize_tray(&mut self) -> Result<()> {
+    fn initialize(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
         let tray = TrayIconBuilder::new()
             .with_icon_templated(tray_template_icon()?)
             .with_autosave_name("dev.step2.ntfs-manager")
@@ -109,160 +127,37 @@ impl App {
             .build()
             .context("failed to create menu-bar item")?;
 
+        let window = event_loop
+            .create_window(
+                Window::default_attributes()
+                    .with_title("NTFS Manager")
+                    .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+                    .with_min_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+                    .with_max_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+                    .with_resizable(false)
+                    .with_decorations(false)
+                    .with_transparent(true)
+                    .with_blur(true)
+                    .with_visible(false)
+                    .with_window_level(WindowLevel::AlwaysOnTop),
+            )
+            .context("failed to create NTFS Manager popover")?;
+
+        let ipc_proxy = self.proxy.clone();
+        let webview = WebViewBuilder::new()
+            .with_html(PANEL_HTML)
+            .with_transparent(true)
+            .with_accept_first_mouse(true)
+            .with_ipc_handler(move |request| {
+                let _ = ipc_proxy.send_event(UserEvent::Ipc(request.body().clone()));
+            })
+            .build(&window)
+            .context("failed to create NTFS Manager webview")?;
+
         self.tray = Some(tray);
-        self.rebuild_menu("Starting…", false)?;
+        self.window = Some(window);
+        self.webview = Some(webview);
         self.request_refresh();
-
-        Ok(())
-    }
-
-    fn rebuild_menu(&mut self, status: &str, helper_current: bool) -> Result<()> {
-        let settings = Settings::load().unwrap_or_default();
-        let installed = is_installed_in_applications();
-
-        let app_header = PredefinedMenuItem::section_header("NTFS Manager");
-        let status_item = MenuItem::new(status, false, None);
-        let auto_mount = CheckMenuItem::new(
-            "Auto-mount NTFS volumes",
-            helper_current && installed,
-            settings.auto_mount,
-            None,
-        );
-
-        let separator1 = PredefinedMenuItem::separator();
-        let volumes_header = PredefinedMenuItem::section_header("Volumes");
-        let empty_volume = MenuItem::new("No NTFS volumes connected", false, None);
-
-        let mut volume_submenus = Vec::<Submenu>::new();
-        let mut volume_actions = Vec::<VolumeMenuActions>::new();
-
-        for volume in &self.volumes {
-            let mounted = volume.mounted || volume.mount_point.is_some();
-            let state = volume_state(volume);
-            let name = volume.name.clone().unwrap_or_else(|| volume.device.clone());
-            let title = format!("{name} — {state}");
-            let size = volume
-                .size_bytes
-                .map(format_bytes)
-                .unwrap_or_else(|| "Unknown size".to_string());
-            let details = MenuItem::new(format!("{} · {size}", volume.device), false, None);
-            let separator = PredefinedMenuItem::separator();
-            let mount = MenuItem::new(
-                "Mount read/write",
-                helper_current && !self.action_in_flight && !volume.writable,
-                None,
-            );
-            let open = MenuItem::new("Open in Finder", volume.mount_point.is_some(), None);
-            let unmount = MenuItem::new(
-                "Unmount",
-                helper_current && !self.action_in_flight && mounted,
-                None,
-            );
-
-            let submenu = SubmenuBuilder::new()
-                .text(title)
-                .enabled(true)
-                .items(&[&details, &separator, &mount, &open, &unmount])
-                .build()
-                .context("failed to build volume submenu")?;
-
-            volume_submenus.push(submenu);
-            volume_actions.push(VolumeMenuActions {
-                device: volume.device.clone(),
-                name,
-                mount_point: volume.mount_point.clone(),
-                mount,
-                open,
-                unmount,
-            });
-        }
-
-        let mount_all = MenuItem::new(
-            "Mount all read/write",
-            helper_current
-                && !self.action_in_flight
-                && self.volumes.len() > 1
-                && self.volumes.iter().any(|volume| !volume.writable),
-            None,
-        );
-        let unmount_all = MenuItem::new(
-            "Unmount all",
-            helper_current
-                && !self.action_in_flight
-                && self.volumes.len() > 1
-                && self
-                    .volumes
-                    .iter()
-                    .any(|volume| volume.mounted || volume.mount_point.is_some()),
-            None,
-        );
-
-        let separator2 = PredefinedMenuItem::separator();
-        let app_header2 = PredefinedMenuItem::section_header("Application");
-        let refresh = MenuItem::new("Refresh", true, None);
-        let move_to_applications = MenuItem::new(
-            "Move to Applications…",
-            !installed && !self.action_in_flight,
-            None,
-        );
-        let open_logs = MenuItem::new("Open Logs", true, None);
-        let separator3 = PredefinedMenuItem::separator();
-        let version = MenuItem::new(
-            format!("Version {}", env!("CARGO_PKG_VERSION")),
-            false,
-            None,
-        );
-        let quit = MenuItem::new("Quit NTFS Manager", true, None);
-
-        let mut builder = SubmenuBuilder::new()
-            .text("NTFS Manager")
-            .enabled(true)
-            .item(&app_header)
-            .item(&status_item)
-            .item(&auto_mount)
-            .item(&separator1)
-            .item(&volumes_header);
-
-        if volume_submenus.is_empty() {
-            builder = builder.item(&empty_volume);
-        } else {
-            for submenu in &volume_submenus {
-                builder = builder.item(submenu);
-            }
-        }
-
-        if self.volumes.len() > 1 {
-            builder = builder.item(&mount_all).item(&unmount_all);
-        }
-
-        builder = builder.item(&separator2).item(&app_header2).item(&refresh);
-
-        if !installed {
-            builder = builder.item(&move_to_applications);
-        }
-
-        builder = builder
-            .item(&open_logs)
-            .item(&separator3)
-            .item(&version)
-            .item(&quit);
-
-        let root = builder.build().context("failed to build tray menu")?;
-
-        if let Some(tray) = self.tray.as_ref() {
-            tray.set_menu(Some(Box::new(root)));
-        }
-
-        self.menu = Some(MenuState {
-            auto_mount,
-            mount_all,
-            unmount_all,
-            refresh,
-            move_to_applications,
-            open_logs,
-            quit,
-            volumes: volume_actions,
-        });
 
         Ok(())
     }
@@ -280,8 +175,7 @@ impl App {
 
         thread::spawn(move || {
             let helper_version = helper.version().ok();
-            let volumes = disks.ntfs_volumes().map_err(|err| format!("{err:#}"));
-
+            let volumes = disks.external_volumes().map_err(|err| format!("{err:#}"));
             let _ = proxy.send_event(UserEvent::Snapshot {
                 volumes,
                 helper_version,
@@ -291,225 +185,275 @@ impl App {
 
     fn apply_snapshot(
         &mut self,
-        volumes: std::result::Result<Vec<NtfsVolume>, String>,
+        volumes: std::result::Result<Vec<DiskVolume>, String>,
         helper_version: Option<String>,
     ) {
         self.refresh_in_flight = false;
+        self.helper_version = helper_version;
 
         match volumes {
             Ok(volumes) => self.volumes = volumes,
-            Err(err) => {
-                self.status_override = Some((
-                    format!("Scan error: {err}"),
-                    Instant::now() + Duration::from_secs(30),
-                ));
-            }
+            Err(err) => self.set_error(format!("Scan error: {err}"), 20),
         }
 
-        let installed = is_installed_in_applications();
-        let helper_current = helper_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
-
-        if installed && !helper_current && !self.setup_launched {
-            match self.launch_setup() {
-                Ok(()) => {
-                    self.setup_launched = true;
-                    self.status_override = Some((
-                        "Updating NTFS Manager components…".to_string(),
-                        Instant::now() + Duration::from_secs(30),
-                    ));
-                }
-                Err(err) => {
-                    self.status_override = Some((
-                        format!("Setup error: {err}"),
-                        Instant::now() + Duration::from_secs(30),
-                    ));
-                }
-            }
+        if is_installed_in_applications()
+            && !self.helper_is_current()
+            && !self.setup_in_flight
+            && runtime_dependencies_ready()
+        {
+            self.start_setup();
         }
 
-        let default_status = if !installed {
-            "Move to Applications to finish setup".to_string()
-        } else if helper_current {
-            summary_status(&self.volumes)
-        } else if let Some(version) = helper_version.as_deref() {
-            format!("Updating helper {version} → {}…", env!("CARGO_PKG_VERSION"))
-        } else if self.setup_launched {
-            "Installing components…".to_string()
-        } else {
-            "Setup required".to_string()
-        };
+        self.push_state();
+    }
 
-        let status = match self.status_override.as_ref() {
-            Some((message, until)) if Instant::now() < *until => message.clone(),
+    fn helper_is_current(&self) -> bool {
+        self.helper_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
+    }
+
+    fn summary(&self) -> String {
+        let ntfs = self
+            .volumes
+            .iter()
+            .filter(|volume| volume.is_ntfs)
+            .collect::<Vec<_>>();
+
+        if ntfs.is_empty() {
+            return "No NTFS volumes connected".to_string();
+        }
+
+        let mounted = ntfs.iter().filter(|volume| volume.mounted).count();
+        let writable = ntfs.iter().filter(|volume| volume.writable).count();
+
+        format!(
+            "{} NTFS · {} mounted · {} read/write",
+            ntfs.len(),
+            mounted,
+            writable
+        )
+    }
+
+    fn current_error(&mut self) -> Option<String> {
+        match self.status_override.as_ref() {
+            Some((message, until)) if Instant::now() < *until => Some(message.clone()),
             Some(_) => {
                 self.status_override = None;
-                default_status.clone()
+                None
             }
-            None => default_status,
+            None => None,
+        }
+    }
+
+    fn push_state(&mut self) {
+        let settings = Settings::load().unwrap_or_default();
+        let error = self.current_error();
+        let state = UiState {
+            version: env!("CARGO_PKG_VERSION"),
+            summary: self.summary(),
+            auto_mount: settings.auto_mount,
+            launch_at_login: settings.launch_at_login,
+            check_updates: settings.check_updates,
+            installed_in_applications: is_installed_in_applications(),
+            helper_ready: self.helper_is_current(),
+            helper_version: self.helper_version.as_deref(),
+            action_in_flight: self.action_in_flight || self.setup_in_flight,
+            error,
+            volumes: &self.volumes,
         };
 
-        let fingerprint = self.menu_fingerprint(&status, helper_current);
-        if self.last_menu_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-            match self.rebuild_menu(&status, helper_current) {
-                Ok(()) => self.last_menu_fingerprint = Some(fingerprint),
-                Err(err) => eprintln!("failed to rebuild tray menu: {err:#}"),
-            }
+        let Ok(json) = serde_json::to_string(&state) else {
+            return;
+        };
+
+        if let Some(webview) = self.webview.as_ref() {
+            let script = format!(
+                "window.ntfsManager && window.ntfsManager.updateState({json});"
+            );
+            let _ = webview.evaluate_script(&script);
         }
 
         if let Some(tray) = self.tray.as_ref() {
-            let _ = tray.set_tooltip(Some(&status));
+            let _ = tray.set_tooltip(Some(&state.summary));
         }
     }
 
-    fn launch_setup(&self) -> Result<()> {
-        let setup = setup_script_path()?;
-
-        if !setup.exists() {
-            bail!("bootstrap.command is missing from app resources");
-        }
-
-        if !is_installed_in_applications() {
-            bail!("move NTFS Manager.app to /Applications first");
-        }
-
-        let script = r#"
-on run argv
-    set setupPath to item 1 of argv
-    tell application "Terminal"
-        activate
-        do script "/bin/bash " & quoted form of setupPath & "; exit"
-    end tell
-end run
-"#;
-
-        let output = Command::new("/usr/bin/osascript")
-            .args(["-e", script, "--"])
-            .arg(&setup)
-            .output()
-            .context("failed to start automatic component setup")?;
-
-        if !output.status.success() {
-            bail!(
-                "failed to start component setup: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-
-        Ok(())
+    fn set_error(&mut self, message: String, seconds: u64) {
+        self.status_override = Some((message, Instant::now() + Duration::from_secs(seconds)));
     }
 
-    fn menu_fingerprint(&self, status: &str, helper_current: bool) -> String {
-        let settings = Settings::load().unwrap_or_default();
-        let mut fingerprint = format!(
-            "{}|{}|{}|{}|{}",
-            status,
-            helper_current,
-            is_installed_in_applications(),
-            settings.auto_mount,
-            self.action_in_flight
-        );
+    fn toggle_panel(&mut self, rect: tray_icon::Rect) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
 
-        for volume in &self.volumes {
-            fingerprint.push('|');
-            fingerprint.push_str(&volume.device);
-            fingerprint.push('|');
-            fingerprint.push_str(volume.name.as_deref().unwrap_or(""));
-            fingerprint.push('|');
-            fingerprint.push_str(if volume.mounted { "1" } else { "0" });
-            fingerprint.push('|');
-            fingerprint.push_str(if volume.writable { "1" } else { "0" });
-            fingerprint.push('|');
-            fingerprint.push_str(volume.mount_point.as_deref().unwrap_or(""));
-            fingerprint.push('|');
-            fingerprint.push_str(
-                &volume
-                    .size_bytes
-                    .map(|size| size.to_string())
-                    .unwrap_or_default(),
-            );
+        if self.panel_visible {
+            window.set_visible(false);
+            self.panel_visible = false;
+            return;
         }
 
-        fingerprint
+        let panel_width = window.outer_size().width as f64;
+        let panel_height = window.outer_size().height as f64;
+        let mut x = rect.position.x + (rect.size.width / 2.0) - (panel_width / 2.0);
+        let mut y = rect.position.y + rect.size.height + 5.0;
+
+        if let Some(monitor) = window.current_monitor() {
+            let position = monitor.position();
+            let size = monitor.size();
+            let left = position.x as f64 + 8.0;
+            let right = position.x as f64 + size.width as f64 - panel_width - 8.0;
+            let top = position.y as f64 + 8.0;
+            let bottom = position.y as f64 + size.height as f64 - panel_height - 8.0;
+
+            x = x.max(left).min(right.max(left));
+            if y > bottom {
+                y = (rect.position.y - panel_height - 5.0).max(top);
+            }
+        }
+
+        window.set_outer_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
+        window.set_visible(true);
+        window.focus_window();
+        self.panel_visible = true;
+        self.request_refresh();
+        self.push_state();
+    }
+
+    fn hide_panel(&mut self) {
+        if let Some(window) = self.window.as_ref() {
+            window.set_visible(false);
+        }
+        self.panel_visible = false;
+    }
+
+    fn handle_ipc(&mut self, event_loop: &ActiveEventLoop, body: &str) {
+        let command = match serde_json::from_str::<UiCommand>(body) {
+            Ok(command) => command,
+            Err(err) => {
+                self.set_error(format!("UI command error: {err}"), 10);
+                self.push_state();
+                return;
+            }
+        };
+
+        match command.action.as_str() {
+            "ready" | "refresh" => {
+                self.request_refresh();
+                self.push_state();
+            }
+            "set-auto-mount" => {
+                if let Some(enabled) = command.enabled {
+                    if let Err(err) = Settings::set_auto_mount(enabled) {
+                        self.set_error(format!("Settings error: {err}"), 20);
+                    }
+                    self.request_refresh();
+                    self.push_state();
+                }
+            }
+            "set-launch-at-login" => {
+                if let Some(enabled) = command.enabled {
+                    if let Err(err) = set_launch_at_login(enabled) {
+                        self.set_error(format!("Launch at login error: {err}"), 20);
+                    }
+                    self.push_state();
+                }
+            }
+            "set-check-updates" => {
+                if let Some(enabled) = command.enabled {
+                    if let Err(err) = Settings::set_check_updates(enabled) {
+                        self.set_error(format!("Settings error: {err}"), 20);
+                    }
+                    self.push_state();
+                }
+            }
+            "mount" => {
+                if let Some(device) = command.device {
+                    self.start_mount_devices(vec![device], "Mount".to_string());
+                }
+            }
+            "unmount" => {
+                if let Some(device) = command.device {
+                    self.start_unmount_devices(vec![device], "Unmount".to_string());
+                }
+            }
+            "mount-all" => {
+                let targets = self
+                    .volumes
+                    .iter()
+                    .filter(|volume| volume.is_ntfs && !volume.writable)
+                    .map(|volume| volume.device.clone())
+                    .collect::<Vec<_>>();
+                self.start_mount_devices(targets, "Mount all".to_string());
+            }
+            "open-volume" => {
+                if let Some(device) = command.device {
+                    if let Some(path) = self
+                        .volumes
+                        .iter()
+                        .find(|volume| volume.device == device)
+                        .and_then(|volume| volume.mount_point.as_deref())
+                    {
+                        if let Err(err) = Command::new("/usr/bin/open").arg(path).spawn() {
+                            self.set_error(format!("Finder error: {err}"), 20);
+                        }
+                    }
+                }
+            }
+            "open-logs" => self.open_logs(),
+            "check-update-now" => {
+                let _ = Command::new("/usr/bin/open")
+                    .arg("https://github.com/CrazyBoy49z/ntfs-manager/releases/latest")
+                    .spawn();
+            }
+            "repair" => self.start_setup(),
+            "move-to-applications" => self.start_move_to_applications(),
+            "quit" => event_loop.exit(),
+            _ => {}
+        }
     }
 
     fn start_mount_devices(&mut self, targets: Vec<String>, label: String) {
-        if self.action_in_flight || targets.is_empty() {
+        if self.action_in_flight || targets.is_empty() || !self.helper_is_current() {
             return;
         }
 
         self.action_in_flight = true;
-        self.status_override = Some((
-            format!("{label}…"),
-            Instant::now() + Duration::from_secs(30),
-        ));
+        self.push_state();
 
         let helper = self.helper.clone();
         let proxy = self.proxy.clone();
 
         thread::spawn(move || {
             let mut errors = Vec::new();
-
             for device in targets {
                 if let Err(err) = helper.mount(&device, None) {
                     errors.push(format!("{device}: {err}"));
                 }
             }
-
             let _ = proxy.send_event(UserEvent::ActionCompleted { label, errors });
         });
-
-        self.request_refresh();
     }
 
     fn start_unmount_devices(&mut self, targets: Vec<String>, label: String) {
-        if self.action_in_flight || targets.is_empty() {
+        if self.action_in_flight || targets.is_empty() || !self.helper_is_current() {
             return;
         }
 
         self.action_in_flight = true;
-        self.status_override = Some((
-            format!("{label}…"),
-            Instant::now() + Duration::from_secs(30),
-        ));
+        self.push_state();
 
         let helper = self.helper.clone();
         let proxy = self.proxy.clone();
 
         thread::spawn(move || {
             let mut errors = Vec::new();
-
             for device in targets {
                 if let Err(err) = helper.unmount(&device) {
                     errors.push(format!("{device}: {err}"));
                 }
             }
-
             let _ = proxy.send_event(UserEvent::ActionCompleted { label, errors });
         });
-
-        self.request_refresh();
-    }
-
-    fn start_mount_all(&mut self) {
-        let targets = self
-            .volumes
-            .iter()
-            .filter(|volume| !volume.writable)
-            .map(|volume| volume.device.clone())
-            .collect::<Vec<_>>();
-
-        self.start_mount_devices(targets, "Mount all".to_string());
-    }
-
-    fn start_unmount_all(&mut self) {
-        let targets = self
-            .volumes
-            .iter()
-            .filter(|volume| volume.mounted || volume.mount_point.is_some())
-            .map(|volume| volume.device.clone())
-            .collect::<Vec<_>>();
-
-        self.start_unmount_devices(targets, "Unmount all".to_string());
     }
 
     fn finish_action(&mut self, label: String, errors: Vec<String>) {
@@ -518,20 +462,60 @@ end run
         if errors.is_empty() {
             self.status_override = Some((
                 format!("{label} completed"),
-                Instant::now() + Duration::from_secs(5),
+                Instant::now() + Duration::from_secs(4),
             ));
         } else {
-            let full_error = errors.join("; ");
-            eprintln!("{label} failed: {full_error}");
-
-            let short_error = full_error.chars().take(180).collect::<String>();
-            self.status_override = Some((
-                format!("{label} failed: {short_error}"),
-                Instant::now() + Duration::from_secs(30),
-            ));
+            let error = errors.join("; ");
+            eprintln!("{label} failed: {error}");
+            self.set_error(format!("{label} failed: {error}"), 30);
         }
 
         self.request_refresh();
+        self.push_state();
+    }
+
+    fn start_setup(&mut self) {
+        if self.setup_in_flight || !is_installed_in_applications() {
+            return;
+        }
+
+        self.setup_in_flight = true;
+        self.push_state();
+
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = if runtime_dependencies_ready() {
+                silent_repair_components().map(|_| SetupOutcome::Repaired)
+            } else {
+                launch_full_setup_terminal().map(|_| SetupOutcome::FullSetupOpened)
+            }
+            .map_err(|err| format!("{err:#}"));
+
+            let _ = proxy.send_event(UserEvent::SetupCompleted { result });
+        });
+    }
+
+    fn finish_setup(&mut self, result: std::result::Result<SetupOutcome, String>) {
+        self.setup_in_flight = false;
+
+        match result {
+            Ok(SetupOutcome::Repaired) => {
+                self.status_override = Some((
+                    "Components repaired".to_string(),
+                    Instant::now() + Duration::from_secs(5),
+                ));
+            }
+            Ok(SetupOutcome::FullSetupOpened) => {
+                self.status_override = Some((
+                    "Setup opened in Terminal for missing dependencies".to_string(),
+                    Instant::now() + Duration::from_secs(12),
+                ));
+            }
+            Err(err) => self.set_error(format!("Setup failed: {err}"), 30),
+        }
+
+        self.request_refresh();
+        self.push_state();
     }
 
     fn start_move_to_applications(&mut self) {
@@ -542,32 +526,24 @@ end run
         let source = match current_app_path() {
             Ok(path) => path,
             Err(err) => {
-                self.status_override = Some((
-                    format!("Move failed: {err}"),
-                    Instant::now() + Duration::from_secs(30),
-                ));
-                self.request_refresh();
+                self.set_error(format!("Move failed: {err}"), 20);
+                self.push_state();
                 return;
             }
         };
 
         self.action_in_flight = true;
-        self.status_override = Some((
-            "Moving NTFS Manager to Applications…".to_string(),
-            Instant::now() + Duration::from_secs(30),
-        ));
+        self.push_state();
 
         let proxy = self.proxy.clone();
         thread::spawn(move || {
             let result = move_app_to_applications(&source).map_err(|err| format!("{err:#}"));
             let _ = proxy.send_event(UserEvent::MoveCompleted { result });
         });
-
-        self.request_refresh();
     }
 
     fn open_logs(&self) {
-        let Some(home) = std::env::var_os("HOME") else {
+        let Some(home) = env::var_os("HOME") else {
             return;
         };
 
@@ -578,127 +554,13 @@ end run
         let _ = fs::create_dir_all(&logs);
         let _ = Command::new("/usr/bin/open").arg(logs).spawn();
     }
-
-    fn handle_menu(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
-        let (
-            is_quit,
-            is_refresh,
-            is_move,
-            is_open_logs,
-            is_auto_mount,
-            is_mount_all,
-            is_unmount_all,
-            volume_action,
-        ) = {
-            let Some(menu) = self.menu.as_ref() else {
-                return;
-            };
-
-            let volume_action = menu.volumes.iter().find_map(|action| {
-                if event.id() == action.mount.id() {
-                    Some(VolumeAction::Mount {
-                        device: action.device.clone(),
-                        name: action.name.clone(),
-                    })
-                } else if event.id() == action.open.id() {
-                    action
-                        .mount_point
-                        .clone()
-                        .map(|path| VolumeAction::Open { path })
-                } else if event.id() == action.unmount.id() {
-                    Some(VolumeAction::Unmount {
-                        device: action.device.clone(),
-                        name: action.name.clone(),
-                    })
-                } else {
-                    None
-                }
-            });
-
-            (
-                event.id() == menu.quit.id(),
-                event.id() == menu.refresh.id(),
-                event.id() == menu.move_to_applications.id(),
-                event.id() == menu.open_logs.id(),
-                event.id() == menu.auto_mount.id(),
-                event.id() == menu.mount_all.id(),
-                event.id() == menu.unmount_all.id(),
-                volume_action,
-            )
-        };
-
-        if is_quit {
-            event_loop.exit();
-            return;
-        }
-
-        if let Some(action) = volume_action {
-            match action {
-                VolumeAction::Mount { device, name } => {
-                    self.start_mount_devices(vec![device], format!("Mount {name}"));
-                }
-                VolumeAction::Open { path } => {
-                    if let Err(err) = Command::new("/usr/bin/open").arg(path).spawn() {
-                        self.status_override = Some((
-                            format!("Finder error: {err}"),
-                            Instant::now() + Duration::from_secs(30),
-                        ));
-                        self.request_refresh();
-                    }
-                }
-                VolumeAction::Unmount { device, name } => {
-                    self.start_unmount_devices(vec![device], format!("Unmount {name}"));
-                }
-            }
-            return;
-        }
-
-        if is_refresh {
-            self.request_refresh();
-            return;
-        }
-
-        if is_move {
-            self.start_move_to_applications();
-            return;
-        }
-
-        if is_open_logs {
-            self.open_logs();
-            return;
-        }
-
-        if is_auto_mount {
-            let settings = Settings::load().unwrap_or_default();
-            match Settings::set_auto_mount(!settings.auto_mount) {
-                Ok(_) => self.request_refresh(),
-                Err(err) => {
-                    self.status_override = Some((
-                        format!("Settings error: {err}"),
-                        Instant::now() + Duration::from_secs(30),
-                    ));
-                    self.request_refresh();
-                }
-            }
-            return;
-        }
-
-        if is_mount_all {
-            self.start_mount_all();
-            return;
-        }
-
-        if is_unmount_all {
-            self.start_unmount_all();
-        }
-    }
 }
 
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.tray.is_none() {
-            if let Err(err) = self.initialize_tray() {
-                eprintln!("failed to initialize NTFS Manager menu bar: {err:#}");
+            if let Err(err) = self.initialize(event_loop) {
+                eprintln!("failed to initialize NTFS Manager: {err:#}");
                 event_loop.exit();
             }
         }
@@ -706,8 +568,24 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
-            UserEvent::Menu(event) => self.handle_menu(event_loop, event),
-            UserEvent::Tick => self.request_refresh(),
+            UserEvent::Tray(event) => {
+                if let TrayIconEvent::Click {
+                    rect,
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    self.toggle_panel(rect);
+                }
+            }
+            UserEvent::Ipc(body) => self.handle_ipc(event_loop, &body),
+            UserEvent::Tick => {
+                self.request_refresh();
+                if self.panel_visible {
+                    self.push_state();
+                }
+            }
             UserEvent::Snapshot {
                 volumes,
                 helper_version,
@@ -715,139 +593,159 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::ActionCompleted { label, errors } => {
                 self.finish_action(label, errors);
             }
-            UserEvent::MoveCompleted { result } => match result {
-                Ok(()) => event_loop.exit(),
-                Err(err) => {
-                    self.action_in_flight = false;
-                    self.status_override = Some((
-                        format!("Move failed: {err}"),
-                        Instant::now() + Duration::from_secs(30),
-                    ));
-                    self.request_refresh();
+            UserEvent::SetupCompleted { result } => self.finish_setup(result),
+            UserEvent::MoveCompleted { result } => {
+                self.action_in_flight = false;
+                match result {
+                    Ok(()) => event_loop.exit(),
+                    Err(err) => {
+                        self.set_error(format!("Move failed: {err}"), 30);
+                        self.push_state();
+                    }
                 }
-            },
+            }
         }
     }
 
     fn window_event(
         &mut self,
         _event_loop: &ActiveEventLoop,
-        _window_id: WindowId,
-        _event: WindowEvent,
+        window_id: WindowId,
+        event: WindowEvent,
     ) {
-    }
-}
-
-fn tray_template_icon() -> Result<Icon> {
-    const WIDTH: u32 = 18;
-    const HEIGHT: u32 = 18;
-
-    let mut rgba = vec![0_u8; (WIDTH * HEIGHT * 4) as usize];
-
-    let mut set_alpha = |x: u32, y: u32, alpha: u8| {
-        let index = ((y * WIDTH + x) * 4) as usize;
-        rgba[index] = 255;
-        rgba[index + 1] = 255;
-        rgba[index + 2] = 255;
-        rgba[index + 3] = alpha;
-    };
-
-    for y in 2..15 {
-        let inset = if y < 5 {
-            2
-        } else if y < 9 {
-            1
-        } else {
-            0
+        let Some(window) = self.window.as_ref() else {
+            return;
         };
-        let left = 3 + inset;
-        let right = 14 - inset;
 
-        for x in left..=right {
-            set_alpha(x, y, 255);
+        if window.id() != window_id {
+            return;
         }
-    }
 
-    for y in 7..10 {
-        for x in 6..12 {
-            set_alpha(x, y, 0);
-        }
-    }
-
-    for x in 5..13 {
-        set_alpha(x, 13, 0);
-    }
-
-    set_alpha(4, 15, 210);
-    set_alpha(5, 15, 255);
-    set_alpha(6, 15, 255);
-    set_alpha(7, 15, 255);
-    set_alpha(8, 15, 255);
-    set_alpha(9, 15, 255);
-    set_alpha(10, 15, 255);
-    set_alpha(11, 15, 255);
-    set_alpha(12, 15, 255);
-    set_alpha(13, 15, 210);
-
-    Icon::from_rgba(rgba, WIDTH, HEIGHT).context("failed to create tray template icon")
-}
-
-fn summary_status(volumes: &[NtfsVolume]) -> String {
-    match volumes {
-        [] => "No NTFS volumes connected".to_string(),
-        [volume] => {
-            let name = volume.name.as_deref().unwrap_or(&volume.device);
-            format!("{name} · {}", volume_state(volume))
-        }
-        volumes => {
-            let writable = volumes.iter().filter(|volume| volume.writable).count();
-            let readonly = volumes
-                .iter()
-                .filter(|volume| {
-                    !volume.writable && (volume.mounted || volume.mount_point.is_some())
-                })
-                .count();
-            let unmounted = volumes.len().saturating_sub(writable + readonly);
-
-            let mut parts = vec![format!("{} NTFS volumes", volumes.len())];
-            if writable > 0 {
-                parts.push(format!("{writable} read/write"));
-            }
-            if readonly > 0 {
-                parts.push(format!("{readonly} read-only"));
-            }
-            if unmounted > 0 {
-                parts.push(format!("{unmounted} unmounted"));
-            }
-
-            parts.join(" · ")
+        match event {
+            WindowEvent::CloseRequested => self.hide_panel(),
+            WindowEvent::Focused(false) if self.panel_visible => self.hide_panel(),
+            _ => {}
         }
     }
 }
 
-fn volume_state(volume: &NtfsVolume) -> &'static str {
-    if volume.writable {
-        "Read/write"
-    } else if volume.mounted || volume.mount_point.is_some() {
-        "Read-only"
-    } else {
-        "Not mounted"
-    }
+fn runtime_dependencies_ready() -> bool {
+    Path::new("/Library/Filesystems/macfuse.fs").exists() && ntfs3g::find_binary().is_ok()
 }
 
-fn format_bytes(bytes: u64) -> String {
-    const GB: f64 = 1_000_000_000.0;
-    const TB: f64 = 1_000_000_000_000.0;
+fn resources_dir() -> Result<PathBuf> {
+    Ok(current_app_path()?.join("Contents").join("Resources"))
+}
 
-    if bytes as f64 >= TB {
-        format!("{:.1} TB", bytes as f64 / TB)
-    } else {
-        format!("{:.0} GB", bytes as f64 / GB)
+fn silent_repair_components() -> Result<()> {
+    let resources = resources_dir()?;
+    let script_path = resources.join("repair-components.sh");
+    if !script_path.exists() {
+        bail!("repair-components.sh is missing from app resources");
     }
+
+    let home = env::var("HOME").context("HOME is not set")?;
+    let uid = unsafe { libc::getuid() };
+    let gid = unsafe { libc::getgid() };
+    let launch_at_login = Settings::load().unwrap_or_default().launch_at_login;
+
+    let shell = format!(
+        "/bin/bash {} {} {} {} {}",
+        shell_quote(&script_path.to_string_lossy()),
+        shell_quote(&home),
+        uid,
+        gid,
+        if launch_at_login { 1 } else { 0 }
+    );
+
+    let apple_script = r#"
+on run argv
+    set commandText to item 1 of argv
+    do shell script commandText with administrator privileges
+end run
+"#;
+
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", apple_script, "--", &shell])
+        .output()
+        .context("failed to request administrator permission for component repair")?;
+
+    if !output.status.success() {
+        bail!(
+            "component repair failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn launch_full_setup_terminal() -> Result<()> {
+    let setup = resources_dir()?.join("bootstrap.command");
+    if !setup.exists() {
+        bail!("bootstrap.command is missing from app resources");
+    }
+
+    let script = r#"
+on run argv
+    set setupPath to item 1 of argv
+    tell application "Terminal"
+        activate
+        do script "/bin/bash " & quoted form of setupPath & "; exit"
+    end tell
+end run
+"#;
+
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", script, "--"])
+        .arg(&setup)
+        .output()
+        .context("failed to start full dependency setup")?;
+
+    if !output.status.success() {
+        bail!(
+            "failed to start dependency setup: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace(''', "'\\''"))
+}
+
+fn set_launch_at_login(enabled: bool) -> Result<()> {
+    let settings = Settings::set_launch_at_login(enabled)?;
+    let home = env::var_os("HOME").context("HOME is not set")?;
+    let launch_agents = PathBuf::from(home).join("Library").join("LaunchAgents");
+    let target = launch_agents.join("dev.step2.ntfs-manager.menubar.plist");
+
+    fs::create_dir_all(&launch_agents)?;
+
+    if !settings.launch_at_login {
+        if target.exists() {
+            fs::remove_file(&target)
+                .with_context(|| format!("failed to remove {}", target.display()))?;
+        }
+        return Ok(());
+    }
+
+    let template = resources_dir()?
+        .join("launchd")
+        .join("dev.step2.ntfs-manager.menubar.plist");
+    let contents = fs::read_to_string(&template)
+        .with_context(|| format!("failed to read {}", template.display()))?;
+    let home = env::var("HOME").context("HOME is not set")?;
+    fs::write(&target, contents.replace("__HOME__", &home))
+        .with_context(|| format!("failed to write {}", target.display()))?;
+
+    Ok(())
 }
 
 fn current_app_path() -> Result<PathBuf> {
-    let executable = std::env::current_exe().context("failed to locate current executable")?;
+    let executable = env::current_exe().context("failed to locate current executable")?;
     let macos_dir = executable.parent().context("invalid app executable path")?;
     let contents_dir = macos_dir.parent().context("invalid app Contents path")?;
     let app = contents_dir.parent().context("invalid app bundle path")?;
@@ -859,14 +757,6 @@ fn is_installed_in_applications() -> bool {
     current_app_path()
         .map(|path| path == Path::new(APPLICATION_PATH))
         .unwrap_or(false)
-}
-
-fn setup_script_path() -> Result<PathBuf> {
-    let app = current_app_path()?;
-    Ok(app
-        .join("Contents")
-        .join("Resources")
-        .join("bootstrap.command"))
 }
 
 fn move_app_to_applications(source: &Path) -> Result<()> {
@@ -967,6 +857,60 @@ fn open_installed_app(app: &Path) -> Result<()> {
     Ok(())
 }
 
+fn tray_template_icon() -> Result<Icon> {
+    const WIDTH: u32 = 18;
+    const HEIGHT: u32 = 18;
+
+    let mut rgba = vec![0_u8; (WIDTH * HEIGHT * 4) as usize];
+
+    let mut set_alpha = |x: u32, y: u32, alpha: u8| {
+        let index = ((y * WIDTH + x) * 4) as usize;
+        rgba[index] = 255;
+        rgba[index + 1] = 255;
+        rgba[index + 2] = 255;
+        rgba[index + 3] = alpha;
+    };
+
+    for y in 2..15 {
+        let inset = if y < 5 {
+            2
+        } else if y < 9 {
+            1
+        } else {
+            0
+        };
+        let left = 3 + inset;
+        let right = 14 - inset;
+
+        for x in left..=right {
+            set_alpha(x, y, 255);
+        }
+    }
+
+    for y in 7..10 {
+        for x in 6..12 {
+            set_alpha(x, y, 0);
+        }
+    }
+
+    for x in 5..13 {
+        set_alpha(x, 13, 0);
+    }
+
+    set_alpha(4, 15, 210);
+    set_alpha(5, 15, 255);
+    set_alpha(6, 15, 255);
+    set_alpha(7, 15, 255);
+    set_alpha(8, 15, 255);
+    set_alpha(9, 15, 255);
+    set_alpha(10, 15, 255);
+    set_alpha(11, 15, 255);
+    set_alpha(12, 15, 255);
+    set_alpha(13, 15, 210);
+
+    Icon::from_rgba(rgba, WIDTH, HEIGHT).context("failed to create tray template icon")
+}
+
 fn main() -> Result<()> {
     platform::require_macos()?;
 
@@ -978,9 +922,9 @@ fn main() -> Result<()> {
 
     let event_loop = builder.build()?;
 
-    let menu_proxy = event_loop.create_proxy();
-    MenuEvent::set_event_handler(Some(move |event| {
-        let _ = menu_proxy.send_event(UserEvent::Menu(event));
+    let tray_proxy = event_loop.create_proxy();
+    TrayIconEvent::set_event_handler(Some(move |event| {
+        let _ = tray_proxy.send_event(UserEvent::Tray(event));
     }));
 
     let tick_proxy = event_loop.create_proxy();
