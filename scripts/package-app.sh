@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${1:-"$ROOT/dist/NTFS Manager.app"}"
 BINARY_DIR="${NTFS_MANAGER_BINARY_DIR:-"$ROOT/target/release"}"
 ICON_WORK="$ROOT/dist/icon-build"
-ICON_SOURCE="$ICON_WORK/NTFSManager.png"
+ICON_SOURCE="$ROOT/assets/NTFSManager.png"
 ICONSET="$ICON_WORK/NTFSManager.iconset"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -37,8 +37,8 @@ install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.agent.plist"     "$A
 
 install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.menubar.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.menubar.plist"
 
-# Generate the branded app icon from source so every release carries the same artwork.
-python3 "$ROOT/scripts/generate-icon.py" "$ICON_SOURCE"
+# Build the macOS icon set from the approved project artwork.
+test -s "$ICON_SOURCE"
 
 make_icon() {
     local size="$1"
@@ -82,9 +82,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.6</string>
+    <string>0.3.7</string>
     <key>CFBundleVersion</key>
-    <string>9</string>
+    <string>10</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
     <key>LSUIElement</key>
