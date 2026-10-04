@@ -102,10 +102,7 @@ impl DiskService {
         let filesystem_type = string_value(dict, "FilesystemType");
         let filesystem_name = string_value(dict, "FilesystemName");
 
-        let is_ntfs = is_ntfs_filesystem(
-            filesystem_type.as_deref(),
-            filesystem_name.as_deref(),
-        );
+        let is_ntfs = is_ntfs_filesystem(filesystem_type.as_deref(), filesystem_name.as_deref());
 
         Ok(VolumeInfo {
             device: string_value(dict, "DeviceIdentifier").unwrap_or_else(|| device.to_string()),
@@ -170,9 +167,7 @@ fn integer_value(dict: &plist::Dictionary, key: &str) -> Option<u64> {
 }
 
 fn is_ntfs_filesystem(filesystem_type: Option<&str>, filesystem_name: Option<&str>) -> bool {
-    if filesystem_type
-        .is_some_and(|value| value.eq_ignore_ascii_case("ntfs"))
-    {
+    if filesystem_type.is_some_and(|value| value.eq_ignore_ascii_case("ntfs")) {
         return true;
     }
 
