@@ -35,7 +35,7 @@ fi
 
 cd "$ROOT"
 cargo build --release --all-features
-"$ROOT/scripts/package-app.sh"
+bash "$ROOT/scripts/package-app.sh"
 
 mkdir -p "$LAUNCH_AGENTS" "$LOG_DIR"
 
