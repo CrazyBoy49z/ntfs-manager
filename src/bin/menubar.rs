@@ -8,9 +8,7 @@ use ntfs_manager::{
     settings::Settings,
 };
 use tray_icon::{
-    menu::{
-        MenuEvent, MenuItem, PredefinedMenuItem, SubmenuBuilder,
-    },
+    menu::{MenuEvent, MenuItem, PredefinedMenuItem, SubmenuBuilder},
     TrayIcon, TrayIconBuilder,
 };
 use winit::{
