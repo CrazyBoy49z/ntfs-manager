@@ -9,6 +9,7 @@ pub const MAX_MESSAGE_BYTES: u64 = 16 * 1024;
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum HelperRequest {
     Ping,
+    Version,
     Mount {
         device: String,
         mount_point: Option<PathBuf>,

@@ -1,4 +1,9 @@
-use std::{path::PathBuf, process::Command, thread, time::Duration};
+use std::{
+    path::PathBuf,
+    process::Command,
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use ntfs_manager::{
@@ -25,7 +30,7 @@ enum UserEvent {
     Tick,
     Snapshot {
         volumes: std::result::Result<Vec<NtfsVolume>, String>,
-        helper_ready: bool,
+        helper_version: Option<String>,
     },
     ActionCompleted {
         label: &'static str,
@@ -54,6 +59,7 @@ struct App {
     setup_launched: bool,
     refresh_in_flight: bool,
     action_in_flight: bool,
+    status_override: Option<(String, Instant)>,
 }
 
 impl App {
@@ -68,6 +74,7 @@ impl App {
             setup_launched: false,
             refresh_in_flight: false,
             action_in_flight: false,
+            status_override: None,
         }
     }
 
@@ -144,12 +151,12 @@ impl App {
         let proxy = self.proxy.clone();
 
         thread::spawn(move || {
-            let helper_ready = helper.ping().is_ok();
+            let helper_version = helper.version().ok();
             let volumes = disks.ntfs_volumes().map_err(|err| format!("{err:#}"));
 
             let _ = proxy.send_event(UserEvent::Snapshot {
                 volumes,
-                helper_ready,
+                helper_version,
             });
         });
     }
@@ -157,87 +164,107 @@ impl App {
     fn apply_snapshot(
         &mut self,
         volumes: std::result::Result<Vec<NtfsVolume>, String>,
-        helper_ready: bool,
+        helper_version: Option<String>,
     ) {
         self.refresh_in_flight = false;
-
-        let Some(menu) = self.menu.as_ref() else {
-            return;
-        };
-
-        menu.refresh.set_enabled(true);
 
         match volumes {
             Ok(volumes) => {
                 self.volumes = volumes;
             }
             Err(err) => {
-                menu.status.set_text(format!("Scan error: {err}"));
+                if let Some(menu) = self.menu.as_ref() {
+                    menu.refresh.set_enabled(true);
+                    menu.status.set_text(format!("Scan error: {err}"));
+                }
                 return;
             }
         }
 
+        let helper_current = helper_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
+
+        if !helper_current && !self.setup_launched {
+            match self.launch_setup() {
+                Ok(()) => {
+                    self.setup_launched = true;
+                    self.status_override = Some((
+                        "Updating NTFS Manager components…".to_string(),
+                        Instant::now() + Duration::from_secs(30),
+                    ));
+                }
+                Err(err) => {
+                    self.status_override = Some((
+                        format!("Setup error: {err}"),
+                        Instant::now() + Duration::from_secs(30),
+                    ));
+                }
+            }
+        }
+
         let settings = Settings::load().unwrap_or_default();
+        let total = self.volumes.len();
+        let writable = self.volumes.iter().filter(|volume| volume.writable).count();
+        let mounted = self.volumes.iter().filter(|volume| volume.mounted).count();
+
+        let default_status = if helper_current {
+            if total == 0 {
+                "No NTFS volumes".to_string()
+            } else {
+                format!("{total} NTFS · {mounted} mounted · {writable} read/write")
+            }
+        } else if let Some(version) = helper_version.as_deref() {
+            format!("Updating helper {version} → {}…", env!("CARGO_PKG_VERSION"))
+        } else if self.setup_launched {
+            "Installing components…".to_string()
+        } else {
+            "Setup required".to_string()
+        };
+
+        let status = match self.status_override.as_ref() {
+            Some((message, until)) if Instant::now() < *until => message.clone(),
+            Some(_) => {
+                self.status_override = None;
+                default_status.clone()
+            }
+            None => default_status.clone(),
+        };
+
+        let Some(menu) = self.menu.as_ref() else {
+            return;
+        };
+
+        menu.refresh.set_enabled(true);
+        menu.status.set_text(&status);
         menu.auto_mount.set_text(if settings.auto_mount {
             "Auto-mount: On"
         } else {
             "Auto-mount: Off"
         });
-
-        let total = self.volumes.len();
-        let writable = self.volumes.iter().filter(|volume| volume.writable).count();
-        let mounted = self.volumes.iter().filter(|volume| volume.mounted).count();
-
         menu.open_first.set_enabled(
             self.volumes
                 .iter()
                 .any(|volume| volume.mount_point.is_some()),
         );
+        menu.mount_all.set_enabled(
+            helper_current
+                && !self.action_in_flight
+                && self.volumes.iter().any(|volume| !volume.writable),
+        );
+        menu.unmount_all.set_enabled(
+            helper_current
+                && !self.action_in_flight
+                && self.volumes.iter().any(|volume| volume.mounted),
+        );
 
-        if helper_ready {
-            let status = if total == 0 {
-                "No NTFS volumes".to_string()
+        if let Some(tray) = self.tray.as_ref() {
+            let _ = tray.set_tooltip(Some(&status));
+            tray.set_title(Some(if helper_current && total > 0 {
+                "NTFS•"
+            } else if helper_current {
+                "NTFS"
             } else {
-                format!("{total} NTFS · {mounted} mounted · {writable} read/write")
-            };
-
-            menu.status.set_text(&status);
-            menu.mount_all.set_enabled(
-                !self.action_in_flight && self.volumes.iter().any(|volume| !volume.writable),
-            );
-            menu.unmount_all.set_enabled(
-                !self.action_in_flight && self.volumes.iter().any(|volume| volume.mounted),
-            );
-
-            if let Some(tray) = self.tray.as_ref() {
-                let _ = tray.set_tooltip(Some(&status));
-                tray.set_title(Some(if total == 0 { "NTFS" } else { "NTFS•" }));
-            }
-        } else {
-            menu.status.set_text(if self.setup_launched {
-                "Installing components…"
-            } else {
-                "Setup required"
-            });
-            menu.mount_all.set_enabled(false);
-            menu.unmount_all.set_enabled(false);
-
-            if let Some(tray) = self.tray.as_ref() {
-                let _ = tray.set_tooltip(Some("NTFS Manager · setup in progress"));
-                tray.set_title(Some("NTFS…"));
-            }
-
-            if !self.setup_launched {
-                match self.launch_setup() {
-                    Ok(()) => {
-                        self.setup_launched = true;
-                        menu.status.set_text("Setup opened in Terminal");
-                    }
-                    Err(err) => {
-                        menu.status.set_text(format!("Setup error: {err}"));
-                    }
-                }
-            }
+                "NTFS…"
+            }));
         }
     }
 
@@ -348,13 +375,20 @@ impl App {
     fn finish_action(&mut self, label: &'static str, errors: Vec<String>) {
         self.action_in_flight = false;
 
-        if let Some(menu) = self.menu.as_ref() {
-            if errors.is_empty() {
-                menu.status.set_text(format!("{label} completed"));
-            } else {
-                menu.status
-                    .set_text(format!("{label} failed: {}", errors.join("; ")));
-            }
+        if errors.is_empty() {
+            self.status_override = Some((
+                format!("{label} completed"),
+                Instant::now() + Duration::from_secs(5),
+            ));
+        } else {
+            let full_error = errors.join("; ");
+            eprintln!("{label} failed: {full_error}");
+
+            let short_error = full_error.chars().take(180).collect::<String>();
+            self.status_override = Some((
+                format!("{label} failed: {short_error}"),
+                Instant::now() + Duration::from_secs(30),
+            ));
         }
 
         self.request_refresh();
@@ -468,8 +502,8 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Tick => self.request_refresh(),
             UserEvent::Snapshot {
                 volumes,
-                helper_ready,
-            } => self.apply_snapshot(volumes, helper_ready),
+                helper_version,
+            } => self.apply_snapshot(volumes, helper_version),
             UserEvent::ActionCompleted { label, errors } => {
                 self.finish_action(label, errors);
             }

@@ -36,6 +36,15 @@ impl HelperClient {
         .map(|_| ())
     }
 
+    pub fn version(&self) -> Result<String> {
+        self.request_with_timeouts(
+            &HelperRequest::Version,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .map(|response| response.message)
+    }
+
     pub fn mount(&self, device: &str, mount_point: Option<&Path>) -> Result<String> {
         let response = self.request(&HelperRequest::Mount {
             device: device.to_string(),

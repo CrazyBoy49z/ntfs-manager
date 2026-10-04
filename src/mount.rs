@@ -239,7 +239,17 @@ fn mount_error(device: &str, output: &Output) -> anyhow::Error {
     let detail = if stderr.is_empty() { stdout } else { stderr };
     let lowered = detail.to_ascii_lowercase();
 
-    if lowered.contains("hibernat")
+    if (lowered.contains("macfuse") || lowered.contains("/dev/macfuse"))
+        && (lowered.contains("not loaded")
+            || lowered.contains("operation not permitted")
+            || lowered.contains("permission denied")
+            || lowered.contains("no such file")
+            || lowered.contains("failed"))
+    {
+        anyhow::anyhow!(
+            "macFUSE is installed but not ready. Allow macFUSE in System Settings → Privacy & Security and restart the Mac, then try again.\n{detail}"
+        )
+    } else if lowered.contains("hibernat")
         || lowered.contains("fast restart")
         || lowered.contains("fast startup")
     {

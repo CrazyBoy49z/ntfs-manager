@@ -9,6 +9,7 @@ use std::{
     },
     path::Path,
     process::Command,
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -39,13 +40,19 @@ fn main() -> Result<()> {
         .with_context(|| format!("failed to bind helper socket at {HELPER_SOCKET}"))?;
     secure_socket()?;
 
-    info!("NTFS Manager privileged helper listening on {HELPER_SOCKET}");
+    let operations = Arc::new(Mutex::new(()));
+
+    info!(
+        "NTFS Manager privileged helper {} listening on {HELPER_SOCKET}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
+                let operations = Arc::clone(&operations);
                 thread::spawn(move || {
-                    if let Err(err) = handle_connection(stream) {
+                    if let Err(err) = handle_connection(stream, operations) {
                         warn!("helper request failed: {err:#}");
                     }
                 });
@@ -57,29 +64,41 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_connection(mut stream: UnixStream) -> Result<()> {
+fn handle_connection(mut stream: UnixStream, operations: Arc<Mutex<()>>) -> Result<()> {
     let (uid, gid) = peer_identity(&stream)?;
     let request = read_request(&stream)?;
 
-    let disks = DiskService::new();
-    let manager = MountManager::direct(disks);
-
     let response = match request {
         HelperRequest::Ping => HelperResponse::ok("pong"),
+        HelperRequest::Version => HelperResponse::ok(env!("CARGO_PKG_VERSION")),
         HelperRequest::Mount {
             device,
             mount_point,
-        } => match manager.mount_for_user(&device, mount_point.as_deref(), uid, gid) {
-            Ok(mounted) => HelperResponse::mounted(
-                format!("mounted /dev/{} read/write", mounted.device),
-                mounted.mount_point,
-            ),
-            Err(err) => HelperResponse::error(format!("{err:#}")),
-        },
-        HelperRequest::Unmount { device } => match manager.unmount(&device) {
-            Ok(()) => HelperResponse::ok(format!("unmounted /dev/{device}")),
-            Err(err) => HelperResponse::error(format!("{err:#}")),
-        },
+        } => {
+            let _guard = operations
+                .lock()
+                .map_err(|_| anyhow::anyhow!("helper operation lock is poisoned"))?;
+            let manager = MountManager::direct(DiskService::new());
+
+            match manager.mount_for_user(&device, mount_point.as_deref(), uid, gid) {
+                Ok(mounted) => HelperResponse::mounted(
+                    format!("mounted /dev/{} read/write", mounted.device),
+                    mounted.mount_point,
+                ),
+                Err(err) => HelperResponse::error(format!("{err:#}")),
+            }
+        }
+        HelperRequest::Unmount { device } => {
+            let _guard = operations
+                .lock()
+                .map_err(|_| anyhow::anyhow!("helper operation lock is poisoned"))?;
+            let manager = MountManager::direct(DiskService::new());
+
+            match manager.unmount(&device) {
+                Ok(()) => HelperResponse::ok(format!("unmounted /dev/{device}")),
+                Err(err) => HelperResponse::error(format!("{err:#}")),
+            }
+        }
     };
 
     serde_json::to_writer(&mut stream, &response)?;
