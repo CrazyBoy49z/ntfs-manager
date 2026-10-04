@@ -181,8 +181,7 @@ impl App {
             }
         }
 
-        let helper_current =
-            helper_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
+        let helper_current = helper_version.as_deref() == Some(env!("CARGO_PKG_VERSION"));
 
         if !helper_current && !self.setup_launched {
             match self.launch_setup() {
@@ -214,10 +213,7 @@ impl App {
                 format!("{total} NTFS · {mounted} mounted · {writable} read/write")
             }
         } else if let Some(version) = helper_version.as_deref() {
-            format!(
-                "Updating helper {version} → {}…",
-                env!("CARGO_PKG_VERSION")
-            )
+            format!("Updating helper {version} → {}…", env!("CARGO_PKG_VERSION"))
         } else if self.setup_launched {
             "Installing components…".to_string()
         } else {
