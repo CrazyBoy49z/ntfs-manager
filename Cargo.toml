@@ -1,6 +1,6 @@
 [package]
 name = "ntfs-manager"
-version = "0.3.9"
+version = "0.4.0"
 edition = "2021"
 description = "Safe macOS NTFS read/write manager powered by macFUSE and ntfs-3g"
 license = "MIT"
@@ -10,7 +10,7 @@ default-run = "ntfs-manager"
 
 [features]
 default = []
-menubar = ["dep:tray-icon", "dep:winit"]
+menubar = ["dep:tray-icon", "dep:winit", "dep:wry"]
 
 [dependencies]
 anyhow = "1.0"
@@ -23,6 +23,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tray-icon = { version = "0.26", optional = true }
 winit = { version = "0.30.13", optional = true }
+wry = { version = "0.56.1", optional = true }
 
 [[bin]]
 name = "ntfs-manager"
