@@ -87,7 +87,7 @@ impl MountManager {
         let volume_name = sanitize_volume_name(volume.name.as_deref().unwrap_or("NTFS"));
         let dev_path = format!("/dev/{device}");
 
-        let mount_point = mount_point
+        let mount_point_str = mount_point
             .to_str()
             .context("mount point is not valid UTF-8")?;
         let uid_option = format!("uid={uid}");
@@ -96,7 +96,7 @@ impl MountManager {
 
         let args = [
             dev_path.as_str(),
-            mount_point,
+            mount_point_str,
             "-o",
             "local",
             "-o",
