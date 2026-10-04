@@ -4,6 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${1:-"$ROOT/dist/NTFS Manager.app"}"
 BINARY_DIR="${NTFS_MANAGER_BINARY_DIR:-"$ROOT/target/release"}"
+ICON_WORK="$ROOT/dist/icon-build"
+ICON_SOURCE="$ICON_WORK/NTFSManager.png"
+ICONSET="$ICON_WORK/NTFSManager.iconset"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "package-app.sh requires macOS" >&2
@@ -17,8 +20,8 @@ for binary in ntfs-manager-menubar ntfs-manager-helper ntfs-manager-agent ntfs-m
     fi
 done
 
-rm -rf "$APP"
-mkdir -p     "$APP/Contents/MacOS"     "$APP/Contents/Resources/bin"     "$APP/Contents/Resources/launchd"
+rm -rf "$APP" "$ICON_WORK"
+mkdir -p     "$APP/Contents/MacOS"     "$APP/Contents/Resources/bin"     "$APP/Contents/Resources/launchd"     "$ICONSET"
 
 install -m 0755     "$BINARY_DIR/ntfs-manager-menubar"     "$APP/Contents/MacOS/ntfs-manager-menubar"
 
@@ -34,6 +37,29 @@ install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.agent.plist"     "$A
 
 install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.menubar.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.menubar.plist"
 
+# Generate the branded app icon from source so every release carries the same artwork.
+python3 "$ROOT/scripts/generate-icon.py" "$ICON_SOURCE"
+
+make_icon() {
+    local size="$1"
+    local output="$2"
+    /usr/bin/sips -z "$size" "$size" "$ICON_SOURCE" --out "$ICONSET/$output" >/dev/null
+}
+
+make_icon 16 icon_16x16.png
+make_icon 32 icon_16x16@2x.png
+make_icon 32 icon_32x32.png
+make_icon 64 icon_32x32@2x.png
+make_icon 128 icon_128x128.png
+make_icon 256 icon_128x128@2x.png
+make_icon 256 icon_256x256.png
+make_icon 512 icon_256x256@2x.png
+make_icon 512 icon_512x512.png
+make_icon 1024 icon_512x512@2x.png
+
+/usr/bin/iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/NTFSManager.icns"
+install -m 0644 "$ICON_SOURCE" "$APP/Contents/Resources/NTFSManager.png"
+
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,6 +71,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <string>NTFS Manager</string>
     <key>CFBundleExecutable</key>
     <string>ntfs-manager-menubar</string>
+    <key>CFBundleIconFile</key>
+    <string>NTFSManager</string>
     <key>CFBundleIdentifier</key>
     <string>dev.step2.ntfs-manager</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -54,9 +82,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.5</string>
+    <string>0.3.6</string>
     <key>CFBundleVersion</key>
-    <string>8</string>
+    <string>9</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
     <key>LSUIElement</key>
@@ -73,4 +101,5 @@ if command -v /usr/bin/codesign >/dev/null 2>&1; then
     /usr/bin/codesign         --force         --deep         --sign "${CODESIGN_IDENTITY:--}"         "$APP"
 fi
 
+rm -rf "$ICON_WORK"
 echo "Created $APP"

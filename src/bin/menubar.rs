@@ -15,7 +15,7 @@ use ntfs_manager::{
 };
 use tray_icon::{
     menu::{CheckMenuItem, MenuEvent, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder},
-    TrayIcon, TrayIconBuilder,
+    Icon, TrayIcon, TrayIconBuilder,
 };
 use winit::{
     application::ApplicationHandler,
@@ -102,7 +102,8 @@ impl App {
 
     fn initialize_tray(&mut self) -> Result<()> {
         let tray = TrayIconBuilder::new()
-            .with_title("NTFS")
+            .with_icon_templated(tray_template_icon()?)
+            .with_autosave_name("dev.step2.ntfs-manager")
             .with_tooltip("NTFS Manager")
             .build()
             .context("failed to create menu-bar item")?;
@@ -363,15 +364,6 @@ impl App {
 
         if let Some(tray) = self.tray.as_ref() {
             let _ = tray.set_tooltip(Some(&status));
-            tray.set_title(Some(if !installed || !helper_current {
-                "NTFS…"
-            } else if self.volumes.is_empty() {
-                "NTFS"
-            } else if self.volumes.iter().any(|volume| volume.writable) {
-                "NTFS●"
-            } else {
-                "NTFS•"
-            }));
         }
     }
 
@@ -720,6 +712,60 @@ impl ApplicationHandler<UserEvent> for App {
         _event: WindowEvent,
     ) {
     }
+}
+
+fn tray_template_icon() -> Result<Icon> {
+    const WIDTH: u32 = 18;
+    const HEIGHT: u32 = 18;
+
+    let mut rgba = vec![0_u8; (WIDTH * HEIGHT * 4) as usize];
+
+    let mut set_alpha = |x: u32, y: u32, alpha: u8| {
+        let index = ((y * WIDTH + x) * 4) as usize;
+        rgba[index] = 255;
+        rgba[index + 1] = 255;
+        rgba[index + 2] = 255;
+        rgba[index + 3] = alpha;
+    };
+
+    for y in 2..15 {
+        let inset = if y < 5 {
+            2
+        } else if y < 9 {
+            1
+        } else {
+            0
+        };
+        let left = 3 + inset;
+        let right = 14 - inset;
+
+        for x in left..=right {
+            set_alpha(x, y, 255);
+        }
+    }
+
+    for y in 7..10 {
+        for x in 6..12 {
+            set_alpha(x, y, 0);
+        }
+    }
+
+    for x in 5..13 {
+        set_alpha(x, 13, 0);
+    }
+
+    set_alpha(4, 15, 210);
+    set_alpha(5, 15, 255);
+    set_alpha(6, 15, 255);
+    set_alpha(7, 15, 255);
+    set_alpha(8, 15, 255);
+    set_alpha(9, 15, 255);
+    set_alpha(10, 15, 255);
+    set_alpha(11, 15, 255);
+    set_alpha(12, 15, 255);
+    set_alpha(13, 15, 210);
+
+    Icon::from_rgba(rgba, WIDTH, HEIGHT).context("failed to create tray template icon")
 }
 
 fn summary_status(volumes: &[NtfsVolume]) -> String {
