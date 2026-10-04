@@ -7,8 +7,8 @@ Safe NTFS read/write support for macOS, written in Rust and powered by **macFUSE
 1. Open **GitHub Releases**.
 2. Download `NTFS-Manager-vX.Y.Z-macOS-universal.zip`.
 3. Unzip it.
-4. Drag **NTFS Manager.app** to `/Applications`.
-5. Open **NTFS Manager**.
+4. Open **NTFS Manager.app**.
+5. If it is not already in `/Applications`, choose **Move to Applications…** from the menu-bar app. NTFS Manager copies/moves itself to `/Applications`, relaunches there, and continues setup.
 
 On first launch, NTFS Manager automatically opens its setup in Terminal and installs:
 
@@ -34,7 +34,21 @@ A reboot can also be required. macOS intentionally does not allow an app to bypa
 
 ### Gatekeeper
 
-Development builds are ad-hoc signed. Until a Developer ID certificate and notarization are configured, macOS can show an **unidentified developer** warning for a downloaded release. In that case use **Control-click → Open** once.
+Development builds are ad-hoc signed. Until a Developer ID certificate and notarization are configured, macOS can show an **unidentified developer** warning for a downloaded release. First try **Control-click → Open** once.
+
+If macOS still blocks the app, and you downloaded it from this project's official GitHub Releases page, remove the quarantine attribute from **only this app**:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/NTFS Manager.app"
+```
+
+Then open it again:
+
+```bash
+open "/Applications/NTFS Manager.app"
+```
+
+This does **not** disable Gatekeeper globally. It removes the download quarantine flag only from `NTFS Manager.app`. Do not run the command on an app obtained from an untrusted source.
 
 ## What the app installs
 
@@ -52,14 +66,22 @@ The app bundle itself contains the helper, agent and CLI binaries under `Content
 
 ## Menu-bar actions
 
-- Live NTFS volume status.
-- Auto-mount On/Off.
-- Mount all detected NTFS volumes read/write.
-- Unmount all.
-- Open the first mounted NTFS volume in Finder.
-- Refresh.
-- Install / Repair Components.
-- Quit.
+The menu is rebuilt from the current disk state and shows each NTFS volume separately.
+
+- Native **Auto-mount NTFS volumes** checkbox.
+- Per-volume submenu with:
+  - device and size;
+  - current state: Read/write, Read-only, or Not mounted;
+  - **Mount read/write**;
+  - **Open in Finder**;
+  - **Unmount**.
+- **Mount all read/write** and **Unmount all** appear when multiple NTFS volumes are connected.
+- **Refresh**.
+- **Move to Applications…** when the app is running from Downloads/Desktop or another location.
+- **Install / Repair Components…**.
+- **Open Logs**.
+- Version display.
+- **Quit NTFS Manager**.
 
 ## Security model
 
