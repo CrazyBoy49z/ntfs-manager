@@ -187,9 +187,7 @@ impl MountManager {
             .with_context(|| format!("failed to execute diskutil unmount {dev_path}"))?;
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !output.status.success()
-            && !stderr.to_ascii_lowercase().contains("not mounted")
-        {
+        if !output.status.success() && !stderr.to_ascii_lowercase().contains("not mounted") {
             bail!("failed to unmount {dev_path}: {}", stderr.trim());
         }
 
@@ -319,9 +317,7 @@ fn mount_error(device: &str, output: &Output) -> anyhow::Error {
         anyhow::anyhow!(
             "macFUSE is installed but not ready. Allow macFUSE in System Settings → Privacy & Security and restart the Mac, then try again.\n{detail}"
         )
-    } else if lowered.contains("resource busy")
-        || lowered.contains("already exclusively opened")
-    {
+    } else if lowered.contains("resource busy") || lowered.contains("already exclusively opened") {
         anyhow::anyhow!(
             "cannot mount /dev/{device} read/write because macOS or another process still has the NTFS device open. NTFS Manager retried after unmounting it, but the device remained busy. Close Disk Utility or other disk tools, then try again.\n{detail}"
         )
