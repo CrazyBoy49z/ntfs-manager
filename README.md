@@ -2,7 +2,7 @@
 
 Safe NTFS read/write support for macOS, written in Rust and powered by **macFUSE + ntfs-3g**.
 
-NTFS Manager now ships with its own drive-based app icon and a monochrome macOS menu-bar icon. The release build generates the full `.icns` set automatically from the project icon source.
+NTFS Manager ships with its approved drive-based app artwork in `assets/NTFSManager.png` and a monochrome macOS menu-bar icon. The release build generates the full `.icns` set from that artwork automatically.
 
 ## Install — normal users
 
@@ -102,7 +102,7 @@ The privileged helper:
 
 NTFS Manager does not replace Apple's `/sbin/mount_ntfs` and does not disable SIP.
 
-If Windows Fast Startup/hibernation or an unclean NTFS state is detected, mounting stops with an error rather than forcing a risky write mount.
+If Windows Fast Startup/hibernation or an unclean NTFS state is detected, mounting stops with an error rather than forcing a risky write mount. If macOS briefly keeps an NTFS device busy after its read-only mount is removed, NTFS Manager waits for the unmount to settle and retries the ntfs-3g mount before reporting an error.
 
 ## Dependencies installed by first-run setup
 
