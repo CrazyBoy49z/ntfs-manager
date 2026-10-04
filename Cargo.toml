@@ -1,6 +1,6 @@
 [package]
 name = "ntfs-manager"
-version = "0.3.3"
+version = "0.3.4"
 edition = "2021"
 description = "Safe macOS NTFS read/write manager powered by macFUSE and ntfs-3g"
 license = "MIT"
