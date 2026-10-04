@@ -145,6 +145,7 @@ impl MountManager {
 
     pub fn unmount(&self, device: &str) -> Result<()> {
         validate_device_identifier(device)?;
+        self.disks.ntfs_volume(device)?;
         let dev_path = format!("/dev/{device}");
 
         let output = Command::new("/usr/sbin/diskutil")
