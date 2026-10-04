@@ -146,7 +146,7 @@ chmod 0644     "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"     "$LAUNCH_
 sudo launchctl bootstrap system /Library/LaunchDaemons/dev.step2.ntfs-manager.helper.plist
 launchctl bootstrap "gui/$UID_NOW" "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"
 
-touch "$STATE_DIR/installed-v0.3.2"
+touch "$STATE_DIR/installed-v0.3.3"
 
 echo
 echo "NTFS Manager installation completed."
