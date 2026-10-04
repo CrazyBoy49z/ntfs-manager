@@ -37,6 +37,11 @@ fi
 
 mkdir -p "$LAUNCH_AGENTS" "$LOG_DIR" "$STATE_DIR"
 
+SETUP_LOG="$LOG_DIR/setup.log"
+exec > >(tee -a "$SETUP_LOG") 2>&1
+
+MACFUSE_INSTALLED_NOW=0
+
 find_brew() {
     for candidate in /opt/homebrew/bin/brew /usr/local/bin/brew; do
         if [[ -x "$candidate" ]]; then
@@ -101,6 +106,7 @@ find_ntfs3g() {
 if [[ ! -d /Library/Filesystems/macfuse.fs ]]; then
     echo "Installing macFUSE..."
     "$BREW" install --cask macfuse
+    MACFUSE_INSTALLED_NOW=1
 else
     echo "macFUSE is already installed — skipping."
 fi
@@ -146,19 +152,19 @@ chmod 0644     "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"     "$LAUNCH_
 sudo launchctl bootstrap system /Library/LaunchDaemons/dev.step2.ntfs-manager.helper.plist
 launchctl bootstrap "gui/$UID_NOW" "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"
 
-touch "$STATE_DIR/installed-v0.3.7"
+touch "$STATE_DIR/installed-v0.3.8"
 
 echo
 echo "NTFS Manager installation completed."
-echo
-echo "IMPORTANT:"
-echo "If macOS asks you to allow macFUSE in System Settings → Privacy & Security,"
-echo "approve it and restart the Mac. This approval cannot be automated by apps."
-echo
-echo "The menu-bar app is already running. It will detect the helper automatically."
-echo "It is also configured to start automatically at the next login."
+echo "Setup log: $SETUP_LOG"
 echo
 
-/usr/bin/open "x-apple.systempreferences:com.apple.preference.security?General" 2>/dev/null || true
+if [[ "$MACFUSE_INSTALLED_NOW" -eq 1 ]]; then
+    echo "IMPORTANT:"
+    echo "macOS may ask you to allow macFUSE in System Settings → Privacy & Security."
+    echo "If it does, approve it and restart the Mac."
+    echo
+    /usr/bin/open "x-apple.systempreferences:com.apple.preference.security?General" 2>/dev/null || true
+fi
 
-read -r -p "Press Return to close this window..." _
+echo "The menu-bar app will detect the repaired components automatically."
