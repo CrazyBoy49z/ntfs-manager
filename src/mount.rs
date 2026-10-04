@@ -75,7 +75,7 @@ impl MountManager {
         }
 
         if volume.mounted {
-            self.unmount(device)?;
+            self.release_device(device, false)?;
         }
 
         let mount_point = match requested_mount_point {
@@ -123,7 +123,7 @@ impl MountManager {
             .privileged_output(&binary, args)
             .with_context(|| format!("failed to execute ntfs-3g at {}", binary.display()))?;
 
-        for retry in 0..3 {
+        for retry in 0..5 {
             if output.status.success() {
                 break;
             }
@@ -133,21 +133,20 @@ impl MountManager {
                 return Err(mount_error(device, &output));
             }
 
-            if retry == 2 {
+            if retry == 4 {
                 self.cleanup_empty_mount_point(&mount_point);
-                return Err(mount_error(device, &output));
+                return Err(mount_error_with_holders(device, &output));
             }
 
-            if self
-                .disks
-                .ntfs_volume(device)
-                .map(|volume| volume.mounted)
-                .unwrap_or(false)
-            {
-                self.unmount(device)?;
-            } else {
-                thread::sleep(Duration::from_millis(350 * (retry + 1) as u64));
-            }
+            // Disk Arbitration can remount a native read-only NTFS volume
+            // between diskutil unmount and ntfs-3g opening the block device.
+            // Reclaim the partition on every EBUSY. From the second retry on,
+            // use diskutil's force-unmount fallback because the normal
+            // unmount has already failed to make the device exclusively
+            // available to ntfs-3g.
+            self.release_device(device, retry > 0)?;
+
+            thread::sleep(Duration::from_millis(300 + 250 * retry as u64));
 
             output = self
                 .privileged_output(&binary, args)
@@ -179,26 +178,65 @@ impl MountManager {
     pub fn unmount(&self, device: &str) -> Result<()> {
         validate_device_identifier(device)?;
         self.disks.ntfs_volume(device)?;
+        self.release_device(device, false)
+    }
+
+    fn release_device(&self, device: &str, force: bool) -> Result<()> {
+        validate_device_identifier(device)?;
         let dev_path = format!("/dev/{device}");
 
-        let output = Command::new("/usr/sbin/diskutil")
-            .args(["unmount", &dev_path])
+        let mut command = Command::new("/usr/sbin/diskutil");
+        command.arg("unmount");
+        if force {
+            command.arg("force");
+        }
+        command.arg(&dev_path);
+
+        let output = command
             .output()
             .with_context(|| format!("failed to execute diskutil unmount {dev_path}"))?;
 
         let stderr = String::from_utf8_lossy(&output.stderr);
-        if !output.status.success() && !stderr.to_ascii_lowercase().contains("not mounted") {
-            bail!("failed to unmount {dev_path}: {}", stderr.trim());
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let combined = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+
+        if !output.status.success()
+            && !combined.contains("not mounted")
+            && !combined.contains("was not mounted")
+        {
+            bail!(
+                "failed to {}unmount {dev_path}: {}",
+                if force { "force-" } else { "" },
+                stderr.trim()
+            );
         }
 
-        self.wait_until_unmounted(device, Duration::from_secs(3))?;
+        self.wait_until_unmounted(device, Duration::from_secs(5))?;
+        self.wait_until_device_idle(device, Duration::from_secs(3));
 
-        // diskutil can report success slightly before the kernel releases the
-        // device exclusively. A short settle period prevents ntfs-3g from
-        // immediately receiving EBUSY after a successful unmount.
-        thread::sleep(Duration::from_millis(250));
+        // Give IOKit/Disk Arbitration a final moment to close the vnode.
+        thread::sleep(Duration::from_millis(if force { 700 } else { 350 }));
 
         Ok(())
+    }
+
+    fn wait_until_device_idle(&self, device: &str, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        let dev_path = format!("/dev/{device}");
+
+        while Instant::now() < deadline {
+            let output = Command::new("/usr/sbin/lsof")
+                .args(["-t", "--", &dev_path])
+                .output();
+
+            match output {
+                Ok(output) if output.stdout.is_empty() => return,
+                Ok(_) => {}
+                Err(_) => return,
+            }
+
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     fn wait_until_unmounted(&self, device: &str, timeout: Duration) -> Result<()> {
@@ -299,6 +337,24 @@ fn is_resource_busy(output: &Output) -> bool {
         || stdout.contains("resource busy")
         || stderr.contains("already exclusively opened")
         || stdout.contains("already exclusively opened")
+}
+
+fn mount_error_with_holders(device: &str, output: &Output) -> anyhow::Error {
+    let dev_path = format!("/dev/{device}");
+    let holders = Command::new("/usr/sbin/lsof")
+        .args(["-Fn", "--", &dev_path])
+        .output()
+        .ok()
+        .filter(|result| !result.stdout.is_empty())
+        .map(|result| String::from_utf8_lossy(&result.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    let base = mount_error(device, output);
+    if holders.is_empty() {
+        base
+    } else {
+        anyhow::anyhow!("{base}\nProcesses still using {dev_path}:\n{holders}")
+    }
 }
 
 fn mount_error(device: &str, output: &Output) -> anyhow::Error {

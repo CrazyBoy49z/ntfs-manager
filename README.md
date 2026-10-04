@@ -102,7 +102,7 @@ The privileged helper:
 
 NTFS Manager does not replace Apple's `/sbin/mount_ntfs` and does not disable SIP.
 
-If Windows Fast Startup/hibernation or an unclean NTFS state is detected, mounting stops with an error rather than forcing a risky write mount. If macOS briefly keeps an NTFS device busy after its read-only mount is removed, NTFS Manager waits for the unmount to settle and retries the ntfs-3g mount before reporting an error.
+If Windows Fast Startup/hibernation or an unclean NTFS state is detected, mounting stops with an error rather than forcing a risky write mount. If macOS keeps an NTFS device busy after its read-only mount is removed, NTFS Manager waits for Disk Arbitration to release the partition, retries the mount, and can fall back to `diskutil unmount force` for that NTFS partition before reporting an error. When the device still remains busy, the error includes any processes reported by `lsof` as holding the block device.
 
 ## Dependencies installed by first-run setup
 
