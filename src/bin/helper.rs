@@ -2,7 +2,11 @@ use std::{
     fs,
     io::{BufRead, BufReader, Write},
     os::fd::AsRawFd,
-    os::unix::{fs::FileTypeExt, fs::PermissionsExt, net::{UnixListener, UnixStream}},
+    os::unix::{
+        fs::FileTypeExt,
+        fs::PermissionsExt,
+        net::{UnixListener, UnixStream},
+    },
     path::Path,
     process::Command,
     thread,
