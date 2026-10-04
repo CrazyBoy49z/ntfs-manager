@@ -3,21 +3,36 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="${1:-"$ROOT/dist/NTFS Manager.app"}"
-BINARY="$ROOT/target/release/ntfs-manager-menubar"
+BINARY_DIR="${NTFS_MANAGER_BINARY_DIR:-"$ROOT/target/release"}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "package-app.sh requires macOS" >&2
     exit 1
 fi
 
-if [[ ! -x "$BINARY" ]]; then
-    echo "Missing $BINARY. Run: cargo build --release --all-features" >&2
-    exit 1
-fi
+for binary in ntfs-manager-menubar ntfs-manager-helper ntfs-manager-agent ntfs-manager; do
+    if [[ ! -x "$BINARY_DIR/$binary" ]]; then
+        echo "Missing $BINARY_DIR/$binary" >&2
+        exit 1
+    fi
+done
 
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-install -m 0755 "$BINARY" "$APP/Contents/MacOS/ntfs-manager-menubar"
+mkdir -p     "$APP/Contents/MacOS"     "$APP/Contents/Resources/bin"     "$APP/Contents/Resources/launchd"
+
+install -m 0755     "$BINARY_DIR/ntfs-manager-menubar"     "$APP/Contents/MacOS/ntfs-manager-menubar"
+
+for binary in ntfs-manager-helper ntfs-manager-agent ntfs-manager; do
+    install -m 0755         "$BINARY_DIR/$binary"         "$APP/Contents/Resources/bin/$binary"
+done
+
+install -m 0755     "$ROOT/scripts/bootstrap.command"     "$APP/Contents/Resources/bootstrap.command"
+
+install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.helper.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.helper.plist"
+
+install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.agent.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.agent.plist"
+
+install -m 0644     "$ROOT/packaging/dev.step2.ntfs-manager.menubar.plist"     "$APP/Contents/Resources/launchd/dev.step2.ntfs-manager.menubar.plist"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -39,9 +54,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.2.0</string>
+    <string>0.3.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>3</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
     <key>LSUIElement</key>
@@ -53,4 +68,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 /usr/bin/plutil -lint "$APP/Contents/Info.plist" >/dev/null
+
+if command -v /usr/bin/codesign >/dev/null 2>&1; then
+    /usr/bin/codesign         --force         --deep         --sign "${CODESIGN_IDENTITY:--}"         "$APP"
+fi
+
 echo "Created $APP"
