@@ -882,6 +882,7 @@ fn verify_app_bundle(app: &Path) -> Result<()> {
 
 fn open_installed_app(app: &Path) -> Result<()> {
     let output = Command::new("/usr/bin/open")
+        .arg("-n")
         .arg(app)
         .output()
         .context("failed to launch app from Applications")?;
