@@ -79,8 +79,8 @@ fn print_volumes(volumes: &[NtfsVolume], json: bool) -> Result<()> {
     }
 
     println!(
-        "{:<12} {:<24} {:<8} {:<8} {}",
-        "DEVICE", "NAME", "MOUNTED", "WRITABLE", "MOUNT POINT"
+        "{:<12} {:<24} {:<8} {:<8} MOUNT POINT",
+        "DEVICE", "NAME", "MOUNTED", "WRITABLE"
     );
     for volume in volumes {
         println!(
