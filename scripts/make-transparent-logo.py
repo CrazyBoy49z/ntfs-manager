@@ -81,20 +81,32 @@ def main(source, destination):
     chunks = read_chunks(open(source, "rb").read())
     ihdr = next(payload for kind, payload in chunks if kind == b"IHDR")
     width, height, depth, color_type, compression, filtering, interlace = struct.unpack(">IIBBBBB", ihdr)
-    if depth != 8 or color_type not in (2, 6) or compression or filtering or interlace:
-        raise SystemExit("expected non-interlaced 8-bit RGB/RGBA PNG")
+    if depth != 8 or color_type not in (2, 3, 6) or compression or filtering or interlace:
+        raise SystemExit("expected non-interlaced 8-bit RGB, RGBA, or indexed PNG")
 
-    bpp = 3 if color_type == 2 else 4
+    bpp = {2: 3, 3: 1, 6: 4}[color_type]
     compressed = b"".join(payload for kind, payload in chunks if kind == b"IDAT")
     rows = unfilter(zlib.decompress(compressed), width, height, bpp)
+
+    palette = next((payload for kind, payload in chunks if kind == b"PLTE"), None)
+    transparency = next((payload for kind, payload in chunks if kind == b"tRNS"), b"")
 
     rgba = [bytearray(width * 4) for _ in range(height)]
     for y, row in enumerate(rows):
         for x in range(width):
             src = x * bpp
             dst = x * 4
-            rgba[y][dst:dst+3] = row[src:src+3]
-            rgba[y][dst+3] = row[src+3] if bpp == 4 else 255
+
+            if color_type == 3:
+                if palette is None:
+                    raise SystemExit("indexed PNG is missing PLTE")
+                index = row[src]
+                p = index * 3
+                rgba[y][dst:dst+3] = palette[p:p+3]
+                rgba[y][dst+3] = transparency[index] if index < len(transparency) else 255
+            else:
+                rgba[y][dst:dst+3] = row[src:src+3]
+                rgba[y][dst+3] = row[src+3] if bpp == 4 else 255
 
     def white(x, y):
         i = x * 4
