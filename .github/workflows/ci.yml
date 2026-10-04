@@ -22,8 +22,11 @@ jobs:
       - run: cargo test --all-features
       - run: cargo build --release --all-features
 
-      - name: Validate shell scripts
-        run: bash -n scripts/*.sh
+      - name: Validate scripts
+        run: |
+          bash -n scripts/*.sh
+          python3 -m py_compile scripts/*.py
+          test -s assets/panel.html
 
       - name: Validate launchd plists
         run: |
@@ -39,7 +42,10 @@ jobs:
       - name: Verify app branding and signature
         run: |
           test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.icns"
+          test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png"
+          test -x "dist/NTFS Manager.app/Contents/Resources/repair-components.sh"
           test "$(plutil -extract CFBundleIconFile raw 'dist/NTFS Manager.app/Contents/Info.plist')" = "NTFSManager"
+          sips -g hasAlpha "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png" | grep -q "hasAlpha: yes"
           codesign --verify --deep --strict "dist/NTFS Manager.app"
 
   universal:
@@ -76,7 +82,10 @@ jobs:
       - name: Verify universal app
         run: |
           test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.icns"
+          test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png"
+          test -x "dist/NTFS Manager.app/Contents/Resources/repair-components.sh"
           test "$(plutil -extract CFBundleIconFile raw 'dist/NTFS Manager.app/Contents/Info.plist')" = "NTFSManager"
+          sips -g hasAlpha "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png" | grep -q "hasAlpha: yes"
           codesign --verify --deep --strict "dist/NTFS Manager.app"
           lipo -info "dist/NTFS Manager.app/Contents/MacOS/ntfs-manager-menubar"
           for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent; do
