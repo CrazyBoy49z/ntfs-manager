@@ -55,11 +55,7 @@ impl HelperClient {
     }
 
     fn request(&self, request: &HelperRequest) -> Result<HelperResponse> {
-        self.request_with_timeouts(
-            request,
-            Duration::from_secs(30),
-            Duration::from_secs(10),
-        )
+        self.request_with_timeouts(request, Duration::from_secs(30), Duration::from_secs(10))
     }
 
     fn request_with_timeouts(
