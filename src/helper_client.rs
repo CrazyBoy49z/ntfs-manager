@@ -28,7 +28,12 @@ impl HelperClient {
     }
 
     pub fn ping(&self) -> Result<()> {
-        self.request(&HelperRequest::Ping).map(|_| ())
+        self.request_with_timeouts(
+            &HelperRequest::Ping,
+            Duration::from_secs(1),
+            Duration::from_secs(1),
+        )
+        .map(|_| ())
     }
 
     pub fn mount(&self, device: &str, mount_point: Option<&Path>) -> Result<String> {
@@ -50,14 +55,23 @@ impl HelperClient {
     }
 
     fn request(&self, request: &HelperRequest) -> Result<HelperResponse> {
+        self.request_with_timeouts(request, Duration::from_secs(30), Duration::from_secs(10))
+    }
+
+    fn request_with_timeouts(
+        &self,
+        request: &HelperRequest,
+        read_timeout: Duration,
+        write_timeout: Duration,
+    ) -> Result<HelperResponse> {
         let mut stream = UnixStream::connect(&self.socket_path).with_context(|| {
             format!(
                 "cannot connect to privileged helper at {}; run the installer or start the launch daemon",
                 self.socket_path
             )
         })?;
-        stream.set_read_timeout(Some(Duration::from_secs(30)))?;
-        stream.set_write_timeout(Some(Duration::from_secs(10)))?;
+        stream.set_read_timeout(Some(read_timeout))?;
+        stream.set_write_timeout(Some(write_timeout))?;
 
         serde_json::to_writer(&mut stream, request)?;
         stream.write_all(b"\n")?;

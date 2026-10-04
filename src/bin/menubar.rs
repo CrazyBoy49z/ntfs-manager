@@ -14,7 +14,7 @@ use tray_icon::{
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,
-    event_loop::{ActiveEventLoop, EventLoop},
+    event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS},
     window::WindowId,
 };
@@ -23,6 +23,14 @@ use winit::{
 enum UserEvent {
     Menu(MenuEvent),
     Tick,
+    Snapshot {
+        volumes: std::result::Result<Vec<NtfsVolume>, String>,
+        helper_ready: bool,
+    },
+    ActionCompleted {
+        label: &'static str,
+        errors: Vec<String>,
+    },
 }
 
 struct MenuState {
@@ -39,32 +47,36 @@ struct MenuState {
 struct App {
     disks: DiskService,
     helper: HelperClient,
+    proxy: EventLoopProxy<UserEvent>,
     tray: Option<TrayIcon>,
     menu: Option<MenuState>,
     volumes: Vec<NtfsVolume>,
     setup_launched: bool,
+    refresh_in_flight: bool,
+    action_in_flight: bool,
 }
 
-impl Default for App {
-    fn default() -> Self {
+impl App {
+    fn new(proxy: EventLoopProxy<UserEvent>) -> Self {
         Self {
             disks: DiskService::new(),
             helper: HelperClient::new(),
+            proxy,
             tray: None,
             menu: None,
             volumes: Vec::new(),
             setup_launched: false,
+            refresh_in_flight: false,
+            action_in_flight: false,
         }
     }
-}
 
-impl App {
     fn initialize_tray(&mut self) -> Result<()> {
-        let status = MenuItem::new("Scanning NTFS volumes…", false, None);
+        let status = MenuItem::new("Starting…", false, None);
         let auto_mount = MenuItem::new("Auto-mount: loading…", true, None);
-        let mount_all = MenuItem::new("Mount all read/write", true, None);
-        let unmount_all = MenuItem::new("Unmount all", true, None);
-        let open_first = MenuItem::new("Open first mounted volume", true, None);
+        let mount_all = MenuItem::new("Mount all read/write", false, None);
+        let unmount_all = MenuItem::new("Unmount all", false, None);
+        let open_first = MenuItem::new("Open first mounted volume", false, None);
         let refresh = MenuItem::new("Refresh", true, None);
         let install_repair = MenuItem::new("Install / Repair Components", true, None);
         let quit = MenuItem::new("Quit NTFS Manager", true, None);
@@ -110,79 +122,120 @@ impl App {
             quit,
         });
         self.tray = Some(tray);
-        self.refresh();
-        self.ensure_setup();
+
+        self.request_refresh();
 
         Ok(())
     }
 
-    fn refresh(&mut self) {
+    fn request_refresh(&mut self) {
+        if self.refresh_in_flight {
+            return;
+        }
+
+        self.refresh_in_flight = true;
+
+        if let Some(menu) = self.menu.as_ref() {
+            menu.refresh.set_enabled(false);
+        }
+
+        let disks = self.disks.clone();
+        let helper = self.helper.clone();
+        let proxy = self.proxy.clone();
+
+        thread::spawn(move || {
+            let helper_ready = helper.ping().is_ok();
+            let volumes = disks.ntfs_volumes().map_err(|err| format!("{err:#}"));
+
+            let _ = proxy.send_event(UserEvent::Snapshot {
+                volumes,
+                helper_ready,
+            });
+        });
+    }
+
+    fn apply_snapshot(
+        &mut self,
+        volumes: std::result::Result<Vec<NtfsVolume>, String>,
+        helper_ready: bool,
+    ) {
+        self.refresh_in_flight = false;
+
         let Some(menu) = self.menu.as_ref() else {
             return;
         };
 
-        match self.disks.ntfs_volumes() {
+        menu.refresh.set_enabled(true);
+
+        match volumes {
             Ok(volumes) => {
                 self.volumes = volumes;
-
-                let total = self.volumes.len();
-                let writable = self.volumes.iter().filter(|volume| volume.writable).count();
-                let mounted = self.volumes.iter().filter(|volume| volume.mounted).count();
-
-                let status = if total == 0 {
-                    "No NTFS volumes".to_string()
-                } else {
-                    format!("{total} NTFS · {mounted} mounted · {writable} read/write")
-                };
-
-                menu.status.set_text(&status);
-                menu.mount_all
-                    .set_enabled(self.volumes.iter().any(|volume| !volume.writable));
-                menu.unmount_all
-                    .set_enabled(self.volumes.iter().any(|volume| volume.mounted));
-                menu.open_first.set_enabled(
-                    self.volumes
-                        .iter()
-                        .any(|volume| volume.mount_point.is_some()),
-                );
-
-                let settings = Settings::load().unwrap_or_default();
-                menu.auto_mount.set_text(if settings.auto_mount {
-                    "Auto-mount: On"
-                } else {
-                    "Auto-mount: Off"
-                });
-
-                if let Some(tray) = self.tray.as_ref() {
-                    let _ = tray.set_tooltip(Some(&status));
-                    tray.set_title(Some(if total == 0 { "NTFS" } else { "NTFS•" }));
-                }
             }
             Err(err) => {
                 menu.status.set_text(format!("Scan error: {err}"));
+                return;
             }
         }
-    }
 
-    fn ensure_setup(&mut self) {
-        if self.helper.ping().is_ok() {
-            return;
-        }
+        let settings = Settings::load().unwrap_or_default();
+        menu.auto_mount.set_text(if settings.auto_mount {
+            "Auto-mount: On"
+        } else {
+            "Auto-mount: Off"
+        });
 
-        let Some(menu) = self.menu.as_ref() else {
-            return;
-        };
+        let total = self.volumes.len();
+        let writable = self.volumes.iter().filter(|volume| volume.writable).count();
+        let mounted = self.volumes.iter().filter(|volume| volume.mounted).count();
 
-        menu.status.set_text("Setup required");
+        menu.open_first.set_enabled(
+            self.volumes
+                .iter()
+                .any(|volume| volume.mount_point.is_some()),
+        );
 
-        if !self.setup_launched {
-            match self.launch_setup() {
-                Ok(()) => {
-                    self.setup_launched = true;
-                    menu.status.set_text("Setup opened in Terminal");
-                }
-                Err(err) => {
-                    menu.status.set_text(format!("Setup error: {err}"));
+        if helper_ready {
+            let status = if total == 0 {
+                "No NTFS volumes".to_string()
+            } else {
+                format!("{total} NTFS · {mounted} mounted · {writable} read/write")
+            };
+
+            menu.status.set_text(&status);
+            menu.mount_all.set_enabled(
+                !self.action_in_flight && self.volumes.iter().any(|volume| !volume.writable),
+            );
+            menu.unmount_all.set_enabled(
+                !self.action_in_flight && self.volumes.iter().any(|volume| volume.mounted),
+            );
+
+            if let Some(tray) = self.tray.as_ref() {
+                let _ = tray.set_tooltip(Some(&status));
+                tray.set_title(Some(if total == 0 { "NTFS" } else { "NTFS•" }));
+            }
+        } else {
+            menu.status.set_text(if self.setup_launched {
+                "Installing components…"
+            } else {
+                "Setup required"
+            });
+            menu.mount_all.set_enabled(false);
+            menu.unmount_all.set_enabled(false);
+
+            if let Some(tray) = self.tray.as_ref() {
+                let _ = tray.set_tooltip(Some("NTFS Manager · setup in progress"));
+                tray.set_title(Some("NTFS…"));
+            }
+
+            if !self.setup_launched {
+                match self.launch_setup() {
+                    Ok(()) => {
+                        self.setup_launched = true;
+                        menu.status.set_text("Setup opened in Terminal");
+                    }
+                    Err(err) => {
+                        menu.status.set_text(format!("Setup error: {err}"));
+                    }
                 }
             }
         }
@@ -208,90 +261,181 @@ impl App {
         Ok(())
     }
 
-    fn handle_menu(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
-        let Some(menu) = self.menu.as_ref() else {
+    fn start_mount_all(&mut self) {
+        if self.action_in_flight {
             return;
+        }
+
+        let targets = self
+            .volumes
+            .iter()
+            .filter(|volume| !volume.writable)
+            .map(|volume| volume.device.clone())
+            .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            return;
+        }
+
+        self.action_in_flight = true;
+        if let Some(menu) = self.menu.as_ref() {
+            menu.status.set_text("Mounting…");
+            menu.mount_all.set_enabled(false);
+            menu.unmount_all.set_enabled(false);
+        }
+
+        let helper = self.helper.clone();
+        let proxy = self.proxy.clone();
+
+        thread::spawn(move || {
+            let mut errors = Vec::new();
+
+            for device in targets {
+                if let Err(err) = helper.mount(&device, None) {
+                    errors.push(format!("{device}: {err}"));
+                }
+            }
+
+            let _ = proxy.send_event(UserEvent::ActionCompleted {
+                label: "Mount",
+                errors,
+            });
+        });
+    }
+
+    fn start_unmount_all(&mut self) {
+        if self.action_in_flight {
+            return;
+        }
+
+        let targets = self
+            .volumes
+            .iter()
+            .filter(|volume| volume.mounted)
+            .map(|volume| volume.device.clone())
+            .collect::<Vec<_>>();
+
+        if targets.is_empty() {
+            return;
+        }
+
+        self.action_in_flight = true;
+        if let Some(menu) = self.menu.as_ref() {
+            menu.status.set_text("Unmounting…");
+            menu.mount_all.set_enabled(false);
+            menu.unmount_all.set_enabled(false);
+        }
+
+        let helper = self.helper.clone();
+        let proxy = self.proxy.clone();
+
+        thread::spawn(move || {
+            let mut errors = Vec::new();
+
+            for device in targets {
+                if let Err(err) = helper.unmount(&device) {
+                    errors.push(format!("{device}: {err}"));
+                }
+            }
+
+            let _ = proxy.send_event(UserEvent::ActionCompleted {
+                label: "Unmount",
+                errors,
+            });
+        });
+    }
+
+    fn finish_action(&mut self, label: &'static str, errors: Vec<String>) {
+        self.action_in_flight = false;
+
+        if let Some(menu) = self.menu.as_ref() {
+            if errors.is_empty() {
+                menu.status.set_text(format!("{label} completed"));
+            } else {
+                menu.status
+                    .set_text(format!("{label} failed: {}", errors.join("; ")));
+            }
+        }
+
+        self.request_refresh();
+    }
+
+    fn handle_menu(&mut self, event_loop: &ActiveEventLoop, event: MenuEvent) {
+        let (
+            is_quit,
+            is_refresh,
+            is_install_repair,
+            is_auto_mount,
+            is_mount_all,
+            is_unmount_all,
+            is_open_first,
+        ) = {
+            let Some(menu) = self.menu.as_ref() else {
+                return;
+            };
+
+            (
+                event.id() == menu.quit.id(),
+                event.id() == menu.refresh.id(),
+                event.id() == menu.install_repair.id(),
+                event.id() == menu.auto_mount.id(),
+                event.id() == menu.mount_all.id(),
+                event.id() == menu.unmount_all.id(),
+                event.id() == menu.open_first.id(),
+            )
         };
 
-        if event.id() == menu.quit.id() {
+        if is_quit {
             event_loop.exit();
             return;
         }
 
-        if event.id() == menu.refresh.id() {
-            self.refresh();
-            self.ensure_setup();
+        if is_refresh {
+            self.request_refresh();
             return;
         }
 
-        if event.id() == menu.install_repair.id() {
+        if is_install_repair {
             match self.launch_setup() {
-                Ok(()) => menu.status.set_text("Setup opened in Terminal"),
-                Err(err) => menu.status.set_text(format!("Setup error: {err}")),
+                Ok(()) => {
+                    self.setup_launched = true;
+                    if let Some(menu) = self.menu.as_ref() {
+                        menu.status.set_text("Setup opened in Terminal");
+                    }
+                }
+                Err(err) => {
+                    if let Some(menu) = self.menu.as_ref() {
+                        menu.status.set_text(format!("Setup error: {err}"));
+                    }
+                }
             }
             return;
         }
 
-        if event.id() == menu.auto_mount.id() {
+        if is_auto_mount {
             let settings = Settings::load().unwrap_or_default();
             match Settings::set_auto_mount(!settings.auto_mount) {
-                Ok(_) => self.refresh(),
-                Err(err) => menu.status.set_text(format!("Settings error: {err}")),
-            }
-            return;
-        }
-
-        if event.id() == menu.mount_all.id() {
-            let mut errors = Vec::new();
-            let targets = self
-                .volumes
-                .iter()
-                .filter(|volume| !volume.writable)
-                .map(|volume| volume.device.clone())
-                .collect::<Vec<_>>();
-
-            for device in targets {
-                if let Err(err) = self.helper.mount(&device, None) {
-                    errors.push(format!("{device}: {err}"));
-                }
-            }
-
-            self.refresh();
-            if !errors.is_empty() {
-                if let Some(menu) = self.menu.as_ref() {
-                    menu.status
-                        .set_text(format!("Mount failed: {}", errors.join("; ")));
+                Ok(_) => self.request_refresh(),
+                Err(err) => {
+                    if let Some(menu) = self.menu.as_ref() {
+                        menu.status.set_text(format!("Settings error: {err}"));
+                    }
                 }
             }
             return;
         }
 
-        if event.id() == menu.unmount_all.id() {
-            let mut errors = Vec::new();
-            let targets = self
-                .volumes
-                .iter()
-                .filter(|volume| volume.mounted)
-                .map(|volume| volume.device.clone())
-                .collect::<Vec<_>>();
-
-            for device in targets {
-                if let Err(err) = self.helper.unmount(&device) {
-                    errors.push(format!("{device}: {err}"));
-                }
-            }
-
-            self.refresh();
-            if !errors.is_empty() {
-                if let Some(menu) = self.menu.as_ref() {
-                    menu.status
-                        .set_text(format!("Unmount failed: {}", errors.join("; ")));
-                }
-            }
+        if is_mount_all {
+            self.start_mount_all();
             return;
         }
 
-        if event.id() == menu.open_first.id() {
+        if is_unmount_all {
+            self.start_unmount_all();
+            return;
+        }
+
+        if is_open_first {
             if let Some(path) = self
                 .volumes
                 .iter()
@@ -299,7 +443,9 @@ impl App {
                 .next()
             {
                 if let Err(err) = Command::new("/usr/bin/open").arg(path).spawn() {
-                    menu.status.set_text(format!("Finder error: {err}"));
+                    if let Some(menu) = self.menu.as_ref() {
+                        menu.status.set_text(format!("Finder error: {err}"));
+                    }
                 }
             }
         }
@@ -319,9 +465,13 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Menu(event) => self.handle_menu(event_loop, event),
-            UserEvent::Tick => {
-                self.refresh();
-                self.ensure_setup();
+            UserEvent::Tick => self.request_refresh(),
+            UserEvent::Snapshot {
+                volumes,
+                helper_ready,
+            } => self.apply_snapshot(volumes, helper_ready),
+            UserEvent::ActionCompleted { label, errors } => {
+                self.finish_action(label, errors);
             }
         }
     }
@@ -376,7 +526,8 @@ fn main() -> Result<()> {
         }
     });
 
-    let mut app = App::default();
+    let app_proxy = event_loop.create_proxy();
+    let mut app = App::new(app_proxy);
     event_loop.run_app(&mut app)?;
 
     Ok(())
