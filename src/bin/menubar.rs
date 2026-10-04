@@ -14,9 +14,7 @@ use ntfs_manager::{
     settings::Settings,
 };
 use tray_icon::{
-    menu::{
-        CheckMenuItem, MenuEvent, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
-    },
+    menu::{CheckMenuItem, MenuEvent, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder},
     TrayIcon, TrayIconBuilder,
 };
 use winit::{
@@ -68,17 +66,9 @@ struct MenuState {
 }
 
 enum VolumeAction {
-    Mount {
-        device: String,
-        name: String,
-    },
-    Open {
-        path: String,
-    },
-    Unmount {
-        device: String,
-        name: String,
-    },
+    Mount { device: String, name: String },
+    Open { path: String },
+    Unmount { device: String, name: String },
 }
 
 struct App {
@@ -147,31 +137,20 @@ impl App {
         for volume in &self.volumes {
             let mounted = volume.mounted || volume.mount_point.is_some();
             let state = volume_state(volume);
-            let name = volume
-                .name
-                .clone()
-                .unwrap_or_else(|| volume.device.clone());
+            let name = volume.name.clone().unwrap_or_else(|| volume.device.clone());
             let title = format!("{name} — {state}");
             let size = volume
                 .size_bytes
                 .map(format_bytes)
                 .unwrap_or_else(|| "Unknown size".to_string());
-            let details = MenuItem::new(
-                format!("{} · {size}", volume.device),
-                false,
-                None,
-            );
+            let details = MenuItem::new(format!("{} · {size}", volume.device), false, None);
             let separator = PredefinedMenuItem::separator();
             let mount = MenuItem::new(
                 "Mount read/write",
                 helper_current && !self.action_in_flight && !volume.writable,
                 None,
             );
-            let open = MenuItem::new(
-                "Open in Finder",
-                volume.mount_point.is_some(),
-                None,
-            );
+            let open = MenuItem::new("Open in Finder", volume.mount_point.is_some(), None);
             let unmount = MenuItem::new(
                 "Unmount",
                 helper_current && !self.action_in_flight && mounted,
@@ -259,10 +238,7 @@ impl App {
             builder = builder.item(&mount_all).item(&unmount_all);
         }
 
-        builder = builder
-            .item(&separator2)
-            .item(&app_header2)
-            .item(&refresh);
+        builder = builder.item(&separator2).item(&app_header2).item(&refresh);
 
         if !installed {
             builder = builder.item(&move_to_applications);
@@ -757,7 +733,9 @@ fn summary_status(volumes: &[NtfsVolume]) -> String {
             let writable = volumes.iter().filter(|volume| volume.writable).count();
             let readonly = volumes
                 .iter()
-                .filter(|volume| !volume.writable && (volume.mounted || volume.mount_point.is_some()))
+                .filter(|volume| {
+                    !volume.writable && (volume.mounted || volume.mount_point.is_some())
+                })
                 .count();
             let unmounted = volumes.len().saturating_sub(writable + readonly);
 
