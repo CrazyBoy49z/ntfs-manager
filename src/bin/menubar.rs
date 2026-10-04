@@ -729,7 +729,13 @@ fn tray_template_icon() -> Result<Icon> {
     };
 
     for y in 2..15 {
-        let inset = if y < 5 { 2 } else if y < 9 { 1 } else { 0 };
+        let inset = if y < 5 {
+            2
+        } else if y < 9 {
+            1
+        } else {
+            0
+        };
         let left = 3 + inset;
         let right = 14 - inset;
 
