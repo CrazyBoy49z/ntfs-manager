@@ -1,5 +1,4 @@
 use std::{
-    env,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -7,26 +6,15 @@ use std::{
 use anyhow::{bail, Context, Result};
 
 pub fn find_binary() -> Result<PathBuf> {
-    if let Ok(explicit) = env::var("NTFS3G_BIN") {
-        let path = PathBuf::from(explicit);
-        if is_executable_file(&path) {
-            return Ok(path);
-        }
-        bail!(
-            "NTFS3G_BIN points to a missing or non-executable file: {}",
-            path.display()
-        );
-    }
-
-    if let Some(path) = find_in_path("ntfs-3g") {
-        return Ok(path);
-    }
-
     for path in [
         "/usr/local/bin/ntfs-3g",
         "/usr/local/sbin/ntfs-3g",
+        "/usr/local/opt/ntfs-3g-mac/bin/ntfs-3g",
+        "/usr/local/opt/ntfs-3g-mac/sbin/ntfs-3g",
         "/opt/homebrew/bin/ntfs-3g",
         "/opt/homebrew/sbin/ntfs-3g",
+        "/opt/homebrew/opt/ntfs-3g-mac/bin/ntfs-3g",
+        "/opt/homebrew/opt/ntfs-3g-mac/sbin/ntfs-3g",
     ] {
         let path = PathBuf::from(path);
         if is_executable_file(&path) {
@@ -62,13 +50,6 @@ pub fn version(binary: &Path) -> Result<String> {
     } else {
         bail!("unable to read ntfs-3g version")
     }
-}
-
-fn find_in_path(binary: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    env::split_paths(&path)
-        .map(|dir| dir.join(binary))
-        .find(|candidate| is_executable_file(candidate))
 }
 
 fn homebrew_formula_binary() -> Option<PathBuf> {
