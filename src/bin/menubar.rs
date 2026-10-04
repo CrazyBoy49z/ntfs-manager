@@ -10,14 +10,11 @@ use anyhow::{bail, Context, Result};
 use ntfs_manager::{
     disk::{DiskService, DiskVolume},
     helper_client::HelperClient,
-    ntfs3g,
-    platform,
+    ntfs3g, platform,
     settings::Settings,
 };
 use serde::{Deserialize, Serialize};
-use tray_icon::{
-    Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
-};
+use tray_icon::{Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalPosition},
@@ -266,9 +263,7 @@ impl App {
         };
 
         if let Some(webview) = self.webview.as_ref() {
-            let script = format!(
-                "window.ntfsManager && window.ntfsManager.updateState({json});"
-            );
+            let script = format!("window.ntfsManager && window.ntfsManager.updateState({json});");
             let _ = webview.evaluate_script(&script);
         }
 
@@ -294,8 +289,7 @@ impl App {
 
         let panel_width = window.outer_size().width as f64;
         let panel_height = window.outer_size().height as f64;
-        let mut x =
-            rect.position.x + (f64::from(rect.size.width) / 2.0) - (panel_width / 2.0);
+        let mut x = rect.position.x + (f64::from(rect.size.width) / 2.0) - (panel_width / 2.0);
         let mut y = rect.position.y + f64::from(rect.size.height) + 5.0;
 
         if let Some(monitor) = window.current_monitor() {
