@@ -2,6 +2,8 @@
 
 Safe NTFS read/write support for macOS, written in Rust and powered by **macFUSE + ntfs-3g**.
 
+NTFS Manager now ships with its own drive-based app icon and a monochrome macOS menu-bar icon. The release build generates the full `.icns` set automatically from the project icon source.
+
 ## Install — normal users
 
 1. Open **GitHub Releases**.
