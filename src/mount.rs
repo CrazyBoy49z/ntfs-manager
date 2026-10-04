@@ -143,6 +143,15 @@ fn mount_error(device: &str, output: &Output) -> anyhow::Error {
 
 fn ensure_mount_point(path: &Path) -> Result<()> {
     if path.exists() {
+        let metadata = fs::symlink_metadata(path)
+            .with_context(|| format!("failed to inspect mount point {}", path.display()))?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            bail!(
+                "mount point must be a real directory, not a symlink: {}",
+                path.display()
+            );
+        }
+
         let mut entries = fs::read_dir(path)
             .with_context(|| format!("failed to inspect mount point {}", path.display()))?;
         if entries.next().is_some() {
@@ -228,6 +237,13 @@ fn choose_mount_point(volume_name: &str) -> Result<PathBuf> {
 fn available_mount_point(path: &Path) -> bool {
     if !path.exists() {
         return true;
+    }
+
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return false;
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return false;
     }
 
     fs::read_dir(path)
