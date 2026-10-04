@@ -8,6 +8,20 @@ use serde::Serialize;
 pub struct DiskService;
 
 #[derive(Clone, Debug, Serialize)]
+pub struct DiskVolume {
+    pub device: String,
+    pub name: Option<String>,
+    pub filesystem: String,
+    pub is_ntfs: bool,
+    pub mounted: bool,
+    pub writable: bool,
+    pub mount_point: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub internal: Option<bool>,
+    pub removable: Option<bool>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct NtfsVolume {
     pub device: String,
     pub name: Option<String>,
@@ -22,6 +36,55 @@ pub struct NtfsVolume {
 impl DiskService {
     pub fn new() -> Self {
         Self
+    }
+
+    pub fn external_volumes(&self) -> Result<Vec<DiskVolume>> {
+        let output = Command::new("/usr/sbin/diskutil")
+            .args(["list", "-plist"])
+            .output()
+            .context("failed to execute diskutil list")?;
+
+        if !output.status.success() {
+            bail!(
+                "diskutil list failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+
+        let plist = Value::from_reader_xml(output.stdout.as_slice())
+            .context("failed to parse diskutil list plist")?;
+
+        let devices = plist
+            .as_dictionary()
+            .and_then(|dict| dict.get("AllDisks"))
+            .and_then(Value::as_array)
+            .context("diskutil list did not return AllDisks")?;
+
+        let mut volumes = Vec::new();
+        for value in devices {
+            let Some(device) = value.as_string() else {
+                continue;
+            };
+
+            if !is_partition_identifier(device) {
+                continue;
+            }
+
+            let Ok(volume) = self.volume_info(device) else {
+                continue;
+            };
+
+            let is_external = volume.internal == Some(false) || volume.removable == Some(true);
+            let has_filesystem =
+                volume.filesystem_type.is_some() || volume.filesystem_name.is_some();
+
+            if is_external && has_filesystem {
+                volumes.push(volume.into_disk_volume());
+            }
+        }
+
+        volumes.sort_by(|a, b| a.device.cmp(&b.device));
+        Ok(volumes)
     }
 
     pub fn ntfs_volumes(&self) -> Result<Vec<NtfsVolume>> {
@@ -113,6 +176,8 @@ impl DiskService {
             size_bytes: integer_value(dict, "TotalSize"),
             internal: bool_value(dict, "Internal"),
             removable: bool_value(dict, "RemovableMedia"),
+            filesystem_type,
+            filesystem_name,
             is_ntfs,
         })
     }
@@ -128,10 +193,33 @@ struct VolumeInfo {
     size_bytes: Option<u64>,
     internal: Option<bool>,
     removable: Option<bool>,
+    filesystem_type: Option<String>,
+    filesystem_name: Option<String>,
     is_ntfs: bool,
 }
 
 impl VolumeInfo {
+    fn into_disk_volume(self) -> DiskVolume {
+        let filesystem = self
+            .filesystem_name
+            .clone()
+            .or(self.filesystem_type.clone())
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        DiskVolume {
+            device: self.device,
+            name: self.name,
+            filesystem,
+            is_ntfs: self.is_ntfs,
+            mounted: self.mounted,
+            writable: self.writable,
+            mount_point: self.mount_point,
+            size_bytes: self.size_bytes,
+            internal: self.internal,
+            removable: self.removable,
+        }
+    }
+
     fn into_public(self) -> NtfsVolume {
         NtfsVolume {
             device: self.device,
