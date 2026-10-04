@@ -166,11 +166,13 @@ fn bool_value(dict: &plist::Dictionary, key: &str) -> Option<bool> {
 }
 
 fn integer_value(dict: &plist::Dictionary, key: &str) -> Option<u64> {
-    dict.get(key).and_then(Value::as_unsigned_integer).or_else(|| {
-        dict.get(key)
-            .and_then(Value::as_signed_integer)
-            .and_then(|value| u64::try_from(value).ok())
-    })
+    dict.get(key)
+        .and_then(Value::as_unsigned_integer)
+        .or_else(|| {
+            dict.get(key)
+                .and_then(Value::as_signed_integer)
+                .and_then(|value| u64::try_from(value).ok())
+        })
 }
 
 pub fn validate_device_identifier(device: &str) -> Result<()> {
