@@ -8,9 +8,12 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     pub auto_mount: bool,
     pub poll_interval_secs: u64,
+    pub launch_at_login: bool,
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -18,6 +21,8 @@ impl Default for Settings {
         Self {
             auto_mount: true,
             poll_interval_secs: 2,
+            launch_at_login: true,
+            check_updates: true,
         }
     }
 }
@@ -76,6 +81,20 @@ impl Settings {
         Ok(settings)
     }
 
+    pub fn set_launch_at_login(enabled: bool) -> Result<Self> {
+        let mut settings = Self::load().unwrap_or_default();
+        settings.launch_at_login = enabled;
+        settings.save()?;
+        Ok(settings)
+    }
+
+    pub fn set_check_updates(enabled: bool) -> Result<Self> {
+        let mut settings = Self::load().unwrap_or_default();
+        settings.check_updates = enabled;
+        settings.save()?;
+        Ok(settings)
+    }
+
     fn validate(&self) -> Result<()> {
         if !(1..=60).contains(&self.poll_interval_secs) {
             bail!("poll_interval_secs must be between 1 and 60");
@@ -109,6 +128,8 @@ mod tests {
         let settings = Settings::default();
         assert!(settings.auto_mount);
         assert_eq!(settings.poll_interval_secs, 2);
+        assert!(settings.launch_at_login);
+        assert!(settings.check_updates);
         assert!(settings.validate().is_ok());
     }
 
@@ -117,6 +138,8 @@ mod tests {
         let settings = Settings {
             auto_mount: true,
             poll_interval_secs: 0,
+            launch_at_login: true,
+            check_updates: true,
         };
 
         assert!(settings.validate().is_err());
