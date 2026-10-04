@@ -2,7 +2,7 @@
 
 Safe NTFS read/write support for macOS, written in Rust and powered by **macFUSE + ntfs-3g**.
 
-NTFS Manager ships with its approved drive-based app artwork in `assets/NTFSManager.png` and a monochrome macOS menu-bar icon. The release build generates the full `.icns` set from that artwork automatically.
+NTFS Manager ships with its approved drive-based app artwork in `assets/NTFSManager.png`, a monochrome menu-bar icon, and a custom macOS popover UI. Release packaging removes the border-connected white background from the app artwork before generating the full `.icns` set, so Finder no longer shows white icon corners.
 
 ## Install — normal users
 
@@ -12,7 +12,7 @@ NTFS Manager ships with its approved drive-based app artwork in `assets/NTFSMana
 4. Open **NTFS Manager.app**.
 5. If it is not already in `/Applications`, choose **Move to Applications…** from the menu-bar app. NTFS Manager copies/moves itself to `/Applications`, relaunches there, and continues setup.
 
-On first launch, NTFS Manager automatically starts its setup through Terminal and installs or repairs the required components. The bundled `bootstrap.command` is executed through `/bin/bash`; it is no longer opened as a Finder document, so Gatekeeper does not separately block the internal setup script.
+On first launch, NTFS Manager installs or repairs the required components. If macFUSE and ntfs-3g are already present, helper/agent repair is performed silently in the background with the normal macOS administrator authorization dialog and no Terminal window. Terminal is used only as a fallback for first-time dependency installation when Homebrew, macFUSE, or ntfs-3g is missing.
 
 - Homebrew, only when Homebrew is missing;
 - macFUSE;
@@ -66,24 +66,29 @@ This does **not** disable Gatekeeper globally. It removes the download quarantin
 
 The app bundle itself contains the helper, agent and CLI binaries under `Contents/Resources/bin`. The first-run setup installs those exact bundled binaries; it does not download executable NTFS Manager components separately.
 
-## Menu-bar actions
+## Menu-bar popover
 
-The menu reflects the current disk state and shows each NTFS volume separately. Periodic background scans no longer rebuild an unchanged open menu, preventing the tray popup from closing itself every few seconds.
+Clicking the menu-bar icon opens a custom compact panel instead of a standard NSMenu.
 
-- Native **Auto-mount NTFS volumes** checkbox.
-- Per-volume submenu with:
-  - device and size;
-  - current state: Read/write, Read-only, or Not mounted;
-  - **Mount read/write**;
-  - **Open in Finder**;
-  - **Unmount**.
-- **Mount all read/write** and **Unmount all** appear when multiple NTFS volumes are connected.
-- **Refresh**.
-- **Move to Applications…** when the app is running from Downloads/Desktop or another location.
-- Component repair is automatic when the helper is missing or has the wrong version.
-- **Open Logs**.
-- Version display.
-- **Quit NTFS Manager**.
+The main panel includes:
+
+- NTFS Manager header, live summary, and Settings button.
+- Native-looking **Auto-mount** switch.
+- Connected external disks, including non-NTFS media such as FAT32/exFAT for context.
+- NTFS disk cards with state, filesystem, device, size, **Mount read/write**, **Open in Finder**, and **Unmount** actions.
+- **Mount all NTFS** and **Refresh** quick actions.
+- **Settings** and **Quit** actions.
+
+The Settings view contains lower-frequency actions:
+
+- Launch at login.
+- Update preference and manual update check.
+- Component/helper status and **Repair**.
+- Move the app to `/Applications`.
+- Open logs.
+- App version.
+
+Background polling updates the open popover in place instead of rebuilding a native menu, so the panel no longer closes itself every few seconds.
 
 ## Security model
 
