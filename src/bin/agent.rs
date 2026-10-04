@@ -5,12 +5,7 @@ use std::{
 };
 
 use anyhow::Result;
-use ntfs_manager::{
-    disk::DiskService,
-    helper_client::HelperClient,
-    platform,
-    settings::Settings,
-};
+use ntfs_manager::{disk::DiskService, helper_client::HelperClient, platform, settings::Settings};
 use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 
