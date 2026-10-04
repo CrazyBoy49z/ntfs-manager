@@ -1,0 +1,91 @@
+name: Release macOS app
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-universal
+
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build Apple Silicon
+        run: cargo build --release --all-features --target aarch64-apple-darwin
+
+      - name: Build Intel
+        run: cargo build --release --all-features --target x86_64-apple-darwin
+
+      - name: Create universal binaries
+        run: |
+          mkdir -p universal-bin
+          for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent ntfs-manager-menubar; do
+            lipo -create               "target/aarch64-apple-darwin/release/$binary"               "target/x86_64-apple-darwin/release/$binary"               -output "universal-bin/$binary"
+            chmod +x "universal-bin/$binary"
+          done
+
+      - name: Package app
+        env:
+          NTFS_MANAGER_BINARY_DIR: ${{ github.workspace }}/universal-bin
+        run: bash scripts/package-app.sh
+
+      - name: Verify app
+        run: |
+          codesign --verify --deep --strict "dist/NTFS Manager.app"
+          lipo -info "dist/NTFS Manager.app/Contents/MacOS/ntfs-manager-menubar"
+
+      - name: Create ZIP
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ditto             -c             -k             --sequesterRsrc             --keepParent             "dist/NTFS Manager.app"             "dist/NTFS-Manager-v$VERSION-macOS-universal.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NTFS-Manager-v${{ steps.version.outputs.version }}-macOS-universal
+          path: dist/NTFS-Manager-v${{ steps.version.outputs.version }}-macOS-universal.zip
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists; skipping release creation."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "$TAG"
+
+          gh release create "$TAG"             "dist/NTFS-Manager-v$VERSION-macOS-universal.zip"             --title "NTFS Manager $TAG"             --generate-notes             --latest
