@@ -22,9 +22,23 @@ fn main() -> Result<()> {
 
     let disks = DiskService::new();
     let helper = HelperClient::new();
-    let mut retry_after = BTreeMap::<String, Instant>::new();
+    let mut retry_after = BTreeMap::<String, (u32, Instant)>::new();
 
-    if let Err(err) = helper.ping() {
+    let mut helper_error = None;
+    for _ in 0..5 {
+        match helper.ping() {
+            Ok(()) => {
+                helper_error = None;
+                break;
+            }
+            Err(err) => {
+                helper_error = Some(err);
+                thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+
+    if let Some(err) = helper_error {
         warn!("privileged helper is not ready: {err:#}");
     }
 
@@ -58,7 +72,7 @@ fn main() -> Result<()> {
             for volume in volumes.iter().filter(|volume| !volume.writable) {
                 if retry_after
                     .get(&volume.device)
-                    .is_some_and(|next| *next > Instant::now())
+                    .is_some_and(|(_, next)| *next > Instant::now())
                 {
                     continue;
                 }
@@ -78,10 +92,22 @@ fn main() -> Result<()> {
                         retry_after.remove(&volume.device);
                     }
                     Err(err) => {
-                        error!("auto-mount failed for /dev/{}: {err:#}", volume.device);
+                        let failures = retry_after
+                            .get(&volume.device)
+                            .map(|(failures, _)| *failures)
+                            .unwrap_or(0)
+                            .saturating_add(1);
+                        let exponent = failures.saturating_sub(1).min(4);
+                        let delay_secs = 15_u64.saturating_mul(1_u64 << exponent).min(300);
+
+                        error!(
+                            "auto-mount failed for /dev/{}: {err:#}; retrying in {}s",
+                            volume.device, delay_secs
+                        );
+
                         retry_after.insert(
                             volume.device.clone(),
-                            Instant::now() + Duration::from_secs(15),
+                            (failures, Instant::now() + Duration::from_secs(delay_secs)),
                         );
                     }
                 }
