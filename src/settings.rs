@@ -134,6 +134,19 @@ mod tests {
     }
 
     #[test]
+    fn legacy_settings_receive_new_defaults() {
+        let settings: Settings = serde_json::from_str(
+            r#"{"auto_mount":false,"poll_interval_secs":5}"#,
+        )
+        .expect("legacy settings should deserialize");
+
+        assert!(!settings.auto_mount);
+        assert_eq!(settings.poll_interval_secs, 5);
+        assert!(settings.launch_at_login);
+        assert!(settings.check_updates);
+    }
+
+    #[test]
     fn invalid_interval_is_rejected() {
         let settings = Settings {
             auto_mount: true,
