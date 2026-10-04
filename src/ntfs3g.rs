@@ -42,11 +42,7 @@ pub fn version(binary: &Path) -> Result<String> {
     let text = if stdout.is_empty() { stderr } else { stdout };
 
     if output.status.success() || !text.is_empty() {
-        Ok(text
-            .lines()
-            .next()
-            .unwrap_or("unknown version")
-            .to_string())
+        Ok(text.lines().next().unwrap_or("unknown version").to_string())
     } else {
         bail!("unable to read ntfs-3g version")
     }
