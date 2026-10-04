@@ -7,9 +7,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 
-use crate::helper_protocol::{
-    HelperRequest, HelperResponse, HELPER_SOCKET, MAX_MESSAGE_BYTES,
-};
+use crate::helper_protocol::{HelperRequest, HelperResponse, HELPER_SOCKET, MAX_MESSAGE_BYTES};
 
 #[derive(Clone, Debug)]
 pub struct HelperClient {
