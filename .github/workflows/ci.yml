@@ -36,8 +36,11 @@ jobs:
       - name: Build host app bundle
         run: bash scripts/package-app.sh
 
-      - name: Verify app signature
-        run: codesign --verify --deep --strict "dist/NTFS Manager.app"
+      - name: Verify app branding and signature
+        run: |
+          test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.icns"
+          test "$(plutil -extract CFBundleIconFile raw 'dist/NTFS Manager.app/Contents/Info.plist')" = "NTFSManager"
+          codesign --verify --deep --strict "dist/NTFS Manager.app"
 
   universal:
     runs-on: macos-latest
@@ -72,6 +75,8 @@ jobs:
 
       - name: Verify universal app
         run: |
+          test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.icns"
+          test "$(plutil -extract CFBundleIconFile raw 'dist/NTFS Manager.app/Contents/Info.plist')" = "NTFSManager"
           codesign --verify --deep --strict "dist/NTFS Manager.app"
           lipo -info "dist/NTFS Manager.app/Contents/MacOS/ntfs-manager-menubar"
           for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent; do
