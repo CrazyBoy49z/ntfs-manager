@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
@@ -17,14 +18,31 @@ pub struct MountedVolume {
     pub mount_point: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum PrivilegeMode {
+    Sudo,
+    Direct,
+}
+
 #[derive(Clone, Debug)]
 pub struct MountManager {
     disks: DiskService,
+    privilege: PrivilegeMode,
 }
 
 impl MountManager {
-    pub fn new(disks: DiskService) -> Self {
-        Self { disks }
+    pub fn sudo(disks: DiskService) -> Self {
+        Self {
+            disks,
+            privilege: PrivilegeMode::Sudo,
+        }
+    }
+
+    pub fn direct(disks: DiskService) -> Self {
+        Self {
+            disks,
+            privilege: PrivilegeMode::Direct,
+        }
     }
 
     pub fn mount(
@@ -32,7 +50,19 @@ impl MountManager {
         device: &str,
         requested_mount_point: Option<&Path>,
     ) -> Result<MountedVolume> {
+        self.mount_for_user(device, requested_mount_point, current_uid(), current_gid())
+    }
+
+    pub fn mount_for_user(
+        &self,
+        device: &str,
+        requested_mount_point: Option<&Path>,
+        uid: u32,
+        gid: u32,
+    ) -> Result<MountedVolume> {
         validate_device_identifier(device)?;
+        validate_owner(uid, gid)?;
+
         let volume = self.disks.ntfs_volume(device)?;
 
         if volume.mounted && volume.writable {
@@ -51,32 +81,48 @@ impl MountManager {
             None => choose_mount_point(volume.name.as_deref().unwrap_or("NTFS"))?,
         };
 
-        ensure_mount_point(&mount_point)?;
+        self.ensure_mount_point(&mount_point)?;
 
         let binary = ntfs3g::find_binary()?;
-        let uid = id_value("-u")?;
-        let gid = id_value("-g")?;
         let volume_name = sanitize_volume_name(volume.name.as_deref().unwrap_or("NTFS"));
         let dev_path = format!("/dev/{device}");
 
-        let output = Command::new("/usr/bin/sudo")
-            .arg(&binary)
-            .arg(&dev_path)
-            .arg(&mount_point)
-            .args(["-o", "local"])
-            .args(["-o", "allow_other"])
-            .args(["-o", "auto_xattr"])
-            .args(["-o", "auto_cache"])
-            .args(["-o", "noatime"])
-            .args(["-o", "windows_names"])
-            .args(["-o", &format!("uid={uid}")])
-            .args(["-o", &format!("gid={gid}")])
-            .args(["-o", &format!("volname={volume_name}")])
-            .output()
+        let mount_point_str = mount_point
+            .to_str()
+            .context("mount point is not valid UTF-8")?;
+        let uid_option = format!("uid={uid}");
+        let gid_option = format!("gid={gid}");
+        let volume_option = format!("volname={volume_name}");
+
+        let args = [
+            dev_path.as_str(),
+            mount_point_str,
+            "-o",
+            "local",
+            "-o",
+            "allow_other",
+            "-o",
+            "auto_xattr",
+            "-o",
+            "auto_cache",
+            "-o",
+            "noatime",
+            "-o",
+            "windows_names",
+            "-o",
+            uid_option.as_str(),
+            "-o",
+            gid_option.as_str(),
+            "-o",
+            volume_option.as_str(),
+        ];
+
+        let output = self
+            .privileged_output(&binary, args)
             .with_context(|| format!("failed to execute ntfs-3g at {}", binary.display()))?;
 
         if !output.status.success() {
-            cleanup_empty_mount_point(&mount_point);
+            self.cleanup_empty_mount_point(&mount_point);
             return Err(mount_error(device, &output));
         }
 
@@ -99,6 +145,7 @@ impl MountManager {
 
     pub fn unmount(&self, device: &str) -> Result<()> {
         validate_device_identifier(device)?;
+        self.disks.ntfs_volume(device)?;
         let dev_path = format!("/dev/{device}");
 
         let output = Command::new("/usr/sbin/diskutil")
@@ -116,6 +163,73 @@ impl MountManager {
         }
 
         bail!("failed to unmount {dev_path}: {}", stderr.trim())
+    }
+
+    fn ensure_mount_point(&self, path: &Path) -> Result<()> {
+        if path.exists() {
+            let metadata = fs::symlink_metadata(path)
+                .with_context(|| format!("failed to inspect mount point {}", path.display()))?;
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                bail!(
+                    "mount point must be a real directory, not a symlink: {}",
+                    path.display()
+                );
+            }
+
+            let mut entries = fs::read_dir(path)
+                .with_context(|| format!("failed to inspect mount point {}", path.display()))?;
+            if entries.next().is_some() {
+                bail!("mount point is not empty: {}", path.display());
+            }
+            return Ok(());
+        }
+
+        let output = self
+            .privileged_output(
+                "/bin/mkdir",
+                ["-p", path.to_str().context("invalid mount point")?],
+            )
+            .with_context(|| format!("failed to create mount point {}", path.display()))?;
+
+        if !output.status.success() {
+            bail!(
+                "failed to create mount point {}: {}",
+                path.display(),
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_empty_mount_point(&self, path: &Path) {
+        let Ok(mut entries) = fs::read_dir(path) else {
+            return;
+        };
+
+        if entries.next().is_none() {
+            let _ = self.privileged_output("/bin/rmdir", [path.as_os_str()]);
+        }
+    }
+
+    fn privileged_output<I, S>(&self, program: impl AsRef<OsStr>, args: I) -> Result<Output>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut command = match self.privilege {
+            PrivilegeMode::Sudo => {
+                let mut command = Command::new("/usr/bin/sudo");
+                command.arg(program.as_ref());
+                command
+            }
+            PrivilegeMode::Direct => Command::new(program.as_ref()),
+        };
+
+        command
+            .args(args)
+            .output()
+            .context("failed to execute privileged command")
     }
 }
 
@@ -138,55 +252,6 @@ fn mount_error(device: &str, output: &Output) -> anyhow::Error {
         )
     } else {
         anyhow::anyhow!("ntfs-3g failed for /dev/{device}: {detail}")
-    }
-}
-
-fn ensure_mount_point(path: &Path) -> Result<()> {
-    if path.exists() {
-        let metadata = fs::symlink_metadata(path)
-            .with_context(|| format!("failed to inspect mount point {}", path.display()))?;
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
-            bail!(
-                "mount point must be a real directory, not a symlink: {}",
-                path.display()
-            );
-        }
-
-        let mut entries = fs::read_dir(path)
-            .with_context(|| format!("failed to inspect mount point {}", path.display()))?;
-        if entries.next().is_some() {
-            bail!("mount point is not empty: {}", path.display());
-        }
-        return Ok(());
-    }
-
-    let output = Command::new("/usr/bin/sudo")
-        .args(["/bin/mkdir", "-p"])
-        .arg(path)
-        .output()
-        .with_context(|| format!("failed to create mount point {}", path.display()))?;
-
-    if !output.status.success() {
-        bail!(
-            "failed to create mount point {}: {}",
-            path.display(),
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-
-    Ok(())
-}
-
-fn cleanup_empty_mount_point(path: &Path) {
-    let Ok(mut entries) = fs::read_dir(path) else {
-        return;
-    };
-
-    if entries.next().is_none() {
-        let _ = Command::new("/usr/bin/sudo")
-            .arg("/bin/rmdir")
-            .arg(path)
-            .output();
     }
 }
 
@@ -273,17 +338,24 @@ fn sanitize_volume_name(name: &str) -> String {
     sanitize_mount_name(name).replace(',', "_")
 }
 
-fn id_value(flag: &str) -> Result<String> {
-    let output = Command::new("/usr/bin/id")
-        .arg(flag)
-        .output()
-        .context("failed to execute id")?;
-
-    if !output.status.success() {
-        bail!("id {flag} failed")
+fn validate_owner(uid: u32, gid: u32) -> Result<()> {
+    if uid == 0 {
+        bail!("refusing to assign an NTFS volume to root");
     }
 
-    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+    if gid == 0 {
+        bail!("refusing to assign an NTFS volume to wheel/root group");
+    }
+
+    Ok(())
+}
+
+fn current_uid() -> u32 {
+    unsafe { libc::getuid() }
+}
+
+fn current_gid() -> u32 {
+    unsafe { libc::getgid() }
 }
 
 #[cfg(test)]
@@ -303,5 +375,12 @@ mod tests {
         assert!(validate_mount_point(Path::new("/tmp/Data")).is_err());
         assert!(validate_mount_point(Path::new("/Volumes/a/b")).is_err());
         assert!(validate_mount_point(Path::new("relative")).is_err());
+    }
+
+    #[test]
+    fn root_owner_is_rejected() {
+        assert!(validate_owner(0, 20).is_err());
+        assert!(validate_owner(501, 0).is_err());
+        assert!(validate_owner(501, 20).is_ok());
     }
 }

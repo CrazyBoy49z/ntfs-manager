@@ -1,16 +1,13 @@
-mod cli;
-mod disk;
-mod mount;
-mod ntfs3g;
-mod platform;
-
 use std::{thread, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
-use cli::{Cli, Commands};
-use disk::{DiskService, NtfsVolume};
-use mount::MountManager;
+use ntfs_manager::{
+    cli::{Cli, Commands},
+    disk::{DiskService, NtfsVolume},
+    mount::MountManager,
+    ntfs3g, platform,
+};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -27,7 +24,7 @@ fn main() -> Result<()> {
     platform::require_macos()?;
 
     let disks = DiskService::new();
-    let manager = MountManager::new(disks.clone());
+    let manager = MountManager::sudo(disks.clone());
 
     match cli.command {
         Commands::List { json } => {

@@ -16,6 +16,22 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all
+      - run: cargo test --all-features
+      - run: cargo build --release --all-features
+
+      - name: Validate shell scripts
+        run: bash -n scripts/*.sh
+
+      - name: Validate launchd plists
+        run: |
+          plutil -lint packaging/dev.step2.ntfs-manager.helper.plist
+          sed "s|__HOME__|$HOME|g" packaging/dev.step2.ntfs-manager.agent.plist > /tmp/ntfs-agent.plist
+          sed "s|__HOME__|$HOME|g" packaging/dev.step2.ntfs-manager.menubar.plist > /tmp/ntfs-menubar.plist
+          plutil -lint /tmp/ntfs-agent.plist
+          plutil -lint /tmp/ntfs-menubar.plist
+
+      - name: Build app bundle
+        run: bash scripts/package-app.sh
