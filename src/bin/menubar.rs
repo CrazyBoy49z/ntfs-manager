@@ -322,7 +322,7 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Tick => {
                 self.refresh();
                 self.ensure_setup();
-            },
+            }
         }
     }
 
@@ -337,15 +337,9 @@ impl ApplicationHandler<UserEvent> for App {
 
 fn current_app_path() -> Result<PathBuf> {
     let executable = std::env::current_exe().context("failed to locate current executable")?;
-    let macos_dir = executable
-        .parent()
-        .context("invalid app executable path")?;
-    let contents_dir = macos_dir
-        .parent()
-        .context("invalid app Contents path")?;
-    let app = contents_dir
-        .parent()
-        .context("invalid app bundle path")?;
+    let macos_dir = executable.parent().context("invalid app executable path")?;
+    let contents_dir = macos_dir.parent().context("invalid app Contents path")?;
+    let app = contents_dir.parent().context("invalid app bundle path")?;
 
     Ok(app.to_path_buf())
 }
