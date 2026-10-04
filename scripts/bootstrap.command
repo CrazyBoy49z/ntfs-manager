@@ -70,20 +70,50 @@ echo
 echo "Homebrew: $BREW"
 echo
 
-if ! "$BREW" tap | grep -qx 'gromgit/fuse'; then
-    "$BREW" tap gromgit/fuse
-fi
+# The installer must not unexpectedly update the user's Homebrew installation.
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ENV_HINTS=1
+export HOMEBREW_NO_INSTALL_CLEANUP=1
+
+find_ntfs3g() {
+    for candidate in         /usr/local/bin/ntfs-3g         /usr/local/sbin/ntfs-3g         /usr/local/opt/ntfs-3g-mac/bin/ntfs-3g         /usr/local/opt/ntfs-3g-mac/sbin/ntfs-3g         /opt/homebrew/bin/ntfs-3g         /opt/homebrew/sbin/ntfs-3g         /opt/homebrew/opt/ntfs-3g-mac/bin/ntfs-3g         /opt/homebrew/opt/ntfs-3g-mac/sbin/ntfs-3g
+    do
+        if [[ -x "$candidate" ]]; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+
+    local prefix
+    prefix="$("$BREW" --prefix ntfs-3g-mac 2>/dev/null || true)"
+    if [[ -n "$prefix" ]]; then
+        for candidate in "$prefix/bin/ntfs-3g" "$prefix/sbin/ntfs-3g"; do
+            if [[ -x "$candidate" ]]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    fi
+
+    return 1
+}
 
 if [[ ! -d /Library/Filesystems/macfuse.fs ]]; then
+    echo "Installing macFUSE..."
     "$BREW" install --cask macfuse
 else
-    echo "macFUSE is already installed."
+    echo "macFUSE is already installed — skipping."
 fi
 
-if ! "$BREW" list --formula ntfs-3g-mac >/dev/null 2>&1; then
-    "$BREW" install gromgit/fuse/ntfs-3g-mac
+NTFS3G="$(find_ntfs3g || true)"
+if [[ -n "$NTFS3G" ]]; then
+    echo "ntfs-3g-mac is already installed: $NTFS3G"
 else
-    echo "ntfs-3g-mac is already installed."
+    echo "Installing ntfs-3g-mac..."
+    if ! "$BREW" tap | grep -qx 'gromgit/fuse'; then
+        "$BREW" tap gromgit/fuse
+    fi
+    "$BREW" install gromgit/fuse/ntfs-3g-mac
 fi
 
 echo
@@ -116,7 +146,7 @@ chmod 0644     "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"     "$LAUNCH_
 sudo launchctl bootstrap system /Library/LaunchDaemons/dev.step2.ntfs-manager.helper.plist
 launchctl bootstrap "gui/$UID_NOW" "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"
 
-touch "$STATE_DIR/installed-v0.3.0"
+touch "$STATE_DIR/installed-v0.3.1"
 
 echo
 echo "NTFS Manager installation completed."
