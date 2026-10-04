@@ -145,9 +145,7 @@ impl App {
 
         thread::spawn(move || {
             let helper_ready = helper.ping().is_ok();
-            let volumes = disks
-                .ntfs_volumes()
-                .map_err(|err| format!("{err:#}"));
+            let volumes = disks.ntfs_volumes().map_err(|err| format!("{err:#}"));
 
             let _ = proxy.send_event(UserEvent::Snapshot {
                 volumes,
