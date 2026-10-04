@@ -196,7 +196,7 @@ impl App {
         }
 
         let app = current_app_path()?;
-        if app != PathBuf::from("/Applications/NTFS Manager.app") {
+        if app != std::path::Path::new("/Applications/NTFS Manager.app") {
             anyhow::bail!("move NTFS Manager.app to /Applications first");
         }
 
