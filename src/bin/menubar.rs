@@ -304,7 +304,7 @@ impl App {
         }
 
         if let Some(tray) = self.tray.as_ref() {
-            let _ = tray.set_tooltip(Some(&state.summary));
+            let _ = tray.set_tooltip(Some("NTFS Manager"));
         }
     }
 
