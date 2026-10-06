@@ -241,7 +241,7 @@ button,select{font:inherit}
       <div class="section-title"><span id="updatesTitle"></span></div>
       <div class="settings-group">
         <div class="row">
-          <div class="settings-copy"><div class="label" id="updateLabel"></div><div class="hint" id="updateStatus"></div></div>
+          <div class="settings-copy"><div class="label" id="updateLabel"></div><div class="hint" id="updateStatus"></div><div class="hint" id="updateError" style="color:#ff9b93;display:none"></div></div>
           <button id="checkUpdateButton" class="small-btn" onclick="send('check-update-now')"></button>
         </div>
       </div>
@@ -357,7 +357,11 @@ function renderState(next){
     const installUpdate=document.getElementById('installUpdate');
     const dismissUpdate=document.getElementById('dismissUpdate');
     const updateStatus=document.getElementById('updateStatus');
+    const updateError=document.getElementById('updateError');
     const checkUpdateButton=document.getElementById('checkUpdateButton');
+
+    updateError.textContent=next.error || '';
+    updateError.style.display=next.error?'block':'none';
 
     if(next.update_available){
       updateBanner.classList.add('show');
@@ -369,8 +373,11 @@ function renderState(next){
       dismissUpdate.disabled=!!next.update_installing;
       installUpdate.textContent=next.update_installing?t('updating'):t('update');
       dismissUpdate.textContent=t('later');
-      updateStatus.textContent=t('available')+' v'+next.update_available.version;
-      checkUpdateButton.textContent=t('update');
+      updateStatus.textContent=next.update_installing
+        ? t('installing')
+        : t('available')+' v'+next.update_available.version;
+      checkUpdateButton.textContent=next.update_installing?t('updating'):t('update');
+      checkUpdateButton.disabled=!!next.update_installing;
       checkUpdateButton.onclick=()=>send('install-update');
     }else{
       updateBanner.classList.remove('show');
