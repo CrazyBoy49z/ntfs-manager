@@ -107,6 +107,15 @@ button{font:inherit}
   font-size:10.5px;line-height:1.35
 }
 .banner.show{display:block}
+.update-banner{
+  display:none;margin:0 0 10px;padding:10px;border-radius:10px;
+  background:rgba(10,132,255,.13);border:1px solid rgba(10,132,255,.34)
+}
+.update-banner.show{display:block}
+.update-title{font-size:12.5px;font-weight:700}
+.update-copy{font-size:10.5px;color:#c7d8ec;margin-top:3px;line-height:1.35}
+.update-actions{display:flex;gap:7px;margin-top:9px}
+.update-actions button{flex:1}
 .footer{display:flex;gap:7px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
 .footer button{flex:1}
 .empty{
@@ -155,6 +164,14 @@ button{font:inherit}
       </div>
 
       <div id="errorBanner" class="banner"></div>
+      <div id="updateBanner" class="update-banner">
+        <div class="update-title" id="updateTitle">Доступне оновлення</div>
+        <div class="update-copy" id="updateCopy"></div>
+        <div class="update-actions">
+          <button id="installUpdate" class="action primary" onclick="send('install-update')">Оновити</button>
+          <button id="dismissUpdate" class="action" onclick="send('dismiss-update')">Пізніше</button>
+        </div>
+      </div>
 
       <div class="row">
         <div class="label">Auto-mount</div>
@@ -199,7 +216,7 @@ button{font:inherit}
           <label class="switch"><input id="launchAtLogin" type="checkbox" onchange="send('set-launch-at-login',{enabled:this.checked})"><span class="slider"></span></label>
         </div>
         <div class="row">
-          <div class="settings-copy"><div class="label">Перевіряти оновлення</div><div class="hint">Відкривати сторінку останнього релізу вручну</div></div>
+          <div class="settings-copy"><div class="label">Перевіряти оновлення</div><div class="hint">Автоматично перевіряти GitHub Releases і питати перед встановленням</div></div>
           <label class="switch"><input id="checkUpdates" type="checkbox" onchange="send('set-check-updates',{enabled:this.checked})"><span class="slider"></span></label>
         </div>
       </div>
@@ -227,8 +244,8 @@ button{font:inherit}
           <button class="small-btn" onclick="send('open-logs')">Open</button>
         </div>
         <div class="row">
-          <div class="settings-copy"><div class="label">Оновлення</div><div class="hint">GitHub Releases</div></div>
-          <button class="small-btn" onclick="send('check-update-now')">Check</button>
+          <div class="settings-copy"><div class="label">Оновлення</div><div class="hint" id="updateStatus">Перевірити останню версію</div></div>
+          <button id="checkUpdateButton" class="small-btn" onclick="send('check-update-now')">Check</button>
         </div>
         <div class="row">
           <div class="settings-copy"><div class="label">Версія</div><div class="hint" id="version">—</div></div>
@@ -315,6 +332,35 @@ window.ntfsManager={
     const banner=document.getElementById('errorBanner');
     banner.textContent=next.error || '';
     banner.classList.toggle('show',!!next.error);
+
+    const updateBanner=document.getElementById('updateBanner');
+    const updateTitle=document.getElementById('updateTitle');
+    const updateCopy=document.getElementById('updateCopy');
+    const installUpdate=document.getElementById('installUpdate');
+    const dismissUpdate=document.getElementById('dismissUpdate');
+    const updateStatus=document.getElementById('updateStatus');
+    const checkUpdateButton=document.getElementById('checkUpdateButton');
+
+    if(next.update_available){
+      updateBanner.classList.add('show');
+      updateTitle.textContent='Доступне оновлення v'+next.update_available.version;
+      updateCopy.textContent=next.update_installing
+        ? 'Завантаження, перевірка та встановлення…'
+        : 'NTFS Manager завантажить і перевірить оновлення, а потім перезапуститься.';
+      installUpdate.disabled=!!next.update_installing;
+      dismissUpdate.disabled=!!next.update_installing;
+      installUpdate.textContent=next.update_installing?'Оновлення…':'Оновити';
+      updateStatus.textContent='Доступна v'+next.update_available.version;
+      checkUpdateButton.textContent='Update';
+      checkUpdateButton.onclick=()=>send('install-update');
+    }else{
+      updateBanner.classList.remove('show');
+      updateStatus.textContent=next.update_checking?'Перевіряю…':'Встановлено v'+next.version;
+      checkUpdateButton.textContent=next.update_checking?'…':'Check';
+      checkUpdateButton.disabled=!!next.update_checking;
+      checkUpdateButton.onclick=()=>send('check-update-now');
+    }
+
     renderVolumes(next.volumes || []);
     const ntfs=(next.volumes||[]).filter(v=>v.is_ntfs);
     const canMount=ntfs.some(v=>!v.writable);
