@@ -236,8 +236,7 @@ impl VolumeInfo {
 
 fn is_user_visible_external_volume(volume: &VolumeInfo) -> bool {
     let is_external = volume.internal == Some(false) || volume.removable == Some(true);
-    let has_filesystem =
-        volume.filesystem_type.is_some() || volume.filesystem_name.is_some();
+    let has_filesystem = volume.filesystem_type.is_some() || volume.filesystem_name.is_some();
 
     if !is_external || !has_filesystem {
         return false;
