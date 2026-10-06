@@ -270,8 +270,18 @@ impl App {
         let writable = ntfs.iter().filter(|volume| volume.writable).count();
 
         match locale {
-            "en" => format!("{} NTFS · {} mounted · {} read/write", ntfs.len(), mounted, writable),
-            _ => format!("{} NTFS · {} змонтовано · {} read/write", ntfs.len(), mounted, writable),
+            "en" => format!(
+                "{} NTFS · {} mounted · {} read/write",
+                ntfs.len(),
+                mounted,
+                writable
+            ),
+            _ => format!(
+                "{} NTFS · {} змонтовано · {} read/write",
+                ntfs.len(),
+                mounted,
+                writable
+            ),
         }
     }
 
