@@ -29,6 +29,10 @@ const APPLICATION_PATH: &str = "/Applications/NTFS Manager.app";
 const PANEL_HTML: &str = include_str!("../../assets/panel.html");
 const PANEL_WIDTH: f64 = 390.0;
 const PANEL_HEIGHT: f64 = 590.0;
+const MIN_HELPER_VERSION: &str = "0.4.2";
+const RELEASES_API_URL: &str =
+    "https://api.github.com/repos/CrazyBoy49z/ntfs-manager/releases/latest";
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Debug)]
 enum UserEvent {
@@ -49,6 +53,13 @@ enum UserEvent {
     MoveCompleted {
         result: std::result::Result<(), String>,
     },
+    UpdateChecked {
+        result: std::result::Result<Option<UpdateInfo>, String>,
+        manual: bool,
+    },
+    UpdateInstalled {
+        result: std::result::Result<(), String>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -56,6 +67,15 @@ enum SetupOutcome {
     Repaired,
     FullSetupOpened,
 }
+
+#[derive(Clone, Debug, Serialize)]
+struct UpdateInfo {
+    version: String,
+    tag: String,
+    zip_url: String,
+    checksum_url: String,
+}
+
 
 #[derive(Debug, Deserialize)]
 struct UiCommand {
@@ -78,6 +98,9 @@ struct UiState<'a> {
     helper_version: Option<&'a str>,
     action_in_flight: bool,
     error: Option<String>,
+    update_available: Option<&'a UpdateInfo>,
+    update_checking: bool,
+    update_installing: bool,
     volumes: &'a [DiskVolume],
 }
 
@@ -94,6 +117,11 @@ struct App {
     action_in_flight: bool,
     setup_in_flight: bool,
     auto_repair_attempted: bool,
+    update_available: Option<UpdateInfo>,
+    update_check_in_flight: bool,
+    update_install_in_flight: bool,
+    last_update_check: Option<Instant>,
+    dismissed_update_version: Option<String>,
     panel_visible: bool,
     status_override: Option<(String, Instant)>,
 }
@@ -113,6 +141,11 @@ impl App {
             action_in_flight: false,
             setup_in_flight: false,
             auto_repair_attempted: false,
+            update_available: None,
+            update_check_in_flight: false,
+            update_install_in_flight: false,
+            last_update_check: None,
+            dismissed_update_version: None,
             panel_visible: false,
             status_override: None,
         }
@@ -157,6 +190,9 @@ impl App {
         self.window = Some(window);
         self.webview = Some(webview);
         self.request_refresh();
+        if Settings::load().unwrap_or_default().check_updates {
+            self.request_update_check(false);
+        }
 
         Ok(())
     }
@@ -196,7 +232,7 @@ impl App {
         }
 
         if is_installed_in_applications()
-            && !self.helper_is_current()
+            && !self.helper_is_compatible()
             && !self.setup_in_flight
             && !self.auto_repair_attempted
             && !auto_repair_prompted_for_current_version()
@@ -208,8 +244,10 @@ impl App {
         self.push_state();
     }
 
-    fn helper_is_current(&self) -> bool {
-        self.helper_version.as_deref() == Some(env!("CARGO_PKG_VERSION"))
+    fn helper_is_compatible(&self) -> bool {
+        self.helper_version
+            .as_deref()
+            .is_some_and(|version| version_at_least(version, MIN_HELPER_VERSION))
     }
 
     fn summary(&self) -> String {
@@ -255,10 +293,15 @@ impl App {
             launch_at_login: settings.launch_at_login,
             check_updates: settings.check_updates,
             installed_in_applications: is_installed_in_applications(),
-            helper_ready: self.helper_is_current(),
+            helper_ready: self.helper_is_compatible(),
             helper_version: self.helper_version.as_deref(),
-            action_in_flight: self.action_in_flight || self.setup_in_flight,
+            action_in_flight: self.action_in_flight
+                || self.setup_in_flight
+                || self.update_install_in_flight,
             error,
+            update_available: self.update_available.as_ref(),
+            update_checking: self.update_check_in_flight,
+            update_installing: self.update_install_in_flight,
             volumes: &self.volumes,
         };
 
@@ -362,6 +405,9 @@ impl App {
                     if let Err(err) = Settings::set_check_updates(enabled) {
                         self.set_error(format!("Settings error: {err}"), 20);
                     }
+                    if enabled {
+                        self.request_update_check(false);
+                    }
                     self.push_state();
                 }
             }
@@ -399,10 +445,13 @@ impl App {
                 }
             }
             "open-logs" => self.open_logs(),
-            "check-update-now" => {
-                let _ = Command::new("/usr/bin/open")
-                    .arg("https://github.com/CrazyBoy49z/ntfs-manager/releases/latest")
-                    .spawn();
+            "check-update-now" => self.request_update_check(true),
+            "install-update" => self.start_update(),
+            "dismiss-update" => {
+                self.dismissed_update_version =
+                    self.update_available.as_ref().map(|update| update.version.clone());
+                self.update_available = None;
+                self.push_state();
             }
             "repair" => self.start_setup(false),
             "move-to-applications" => self.start_move_to_applications(),
@@ -412,7 +461,7 @@ impl App {
     }
 
     fn start_mount_devices(&mut self, targets: Vec<String>, label: String) {
-        if self.action_in_flight || targets.is_empty() || !self.helper_is_current() {
+        if self.action_in_flight || targets.is_empty() || !self.helper_is_compatible() {
             return;
         }
 
@@ -434,7 +483,7 @@ impl App {
     }
 
     fn start_unmount_devices(&mut self, targets: Vec<String>, label: String) {
-        if self.action_in_flight || targets.is_empty() || !self.helper_is_current() {
+        if self.action_in_flight || targets.is_empty() || !self.helper_is_compatible() {
             return;
         }
 
@@ -560,6 +609,88 @@ impl App {
         let _ = fs::create_dir_all(&logs);
         let _ = Command::new("/usr/bin/open").arg(logs).spawn();
     }
+
+    fn request_update_check(&mut self, manual: bool) {
+        if self.update_check_in_flight || self.update_install_in_flight {
+            return;
+        }
+
+        if !manual && !Settings::load().unwrap_or_default().check_updates {
+            return;
+        }
+
+        self.update_check_in_flight = true;
+        self.push_state();
+
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = check_latest_release().map_err(|err| format!("{err:#}"));
+            let _ = proxy.send_event(UserEvent::UpdateChecked { result, manual });
+        });
+    }
+
+    fn finish_update_check(
+        &mut self,
+        result: std::result::Result<Option<UpdateInfo>, String>,
+        manual: bool,
+    ) {
+        self.update_check_in_flight = false;
+        self.last_update_check = Some(Instant::now());
+
+        match result {
+            Ok(Some(update)) => {
+                if manual
+                    || self.dismissed_update_version.as_deref() != Some(update.version.as_str())
+                {
+                    self.update_available = Some(update);
+                }
+            }
+            Ok(None) => {
+                self.update_available = None;
+                if manual {
+                    self.status_override = Some((
+                        "У вас остання версія NTFS Manager".to_string(),
+                        Instant::now() + Duration::from_secs(5),
+                    ));
+                }
+            }
+            Err(err) => {
+                eprintln!("update check failed: {err}");
+                if manual {
+                    self.set_error(format!("Update check failed: {err}"), 20);
+                }
+            }
+        }
+
+        self.push_state();
+    }
+
+    fn start_update(&mut self) {
+        if self.update_install_in_flight {
+            return;
+        }
+
+        let Some(update) = self.update_available.clone() else {
+            self.request_update_check(true);
+            return;
+        };
+
+        if !is_installed_in_applications() {
+            self.set_error("Move NTFS Manager to /Applications before updating".to_string(), 20);
+            self.push_state();
+            return;
+        }
+
+        self.update_install_in_flight = true;
+        self.push_state();
+
+        let proxy = self.proxy.clone();
+        thread::spawn(move || {
+            let result = install_update(&update).map_err(|err| format!("{err:#}"));
+            let _ = proxy.send_event(UserEvent::UpdateInstalled { result });
+        });
+    }
+
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -588,6 +719,15 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::Ipc(body) => self.handle_ipc(event_loop, &body),
             UserEvent::Tick => {
                 self.request_refresh();
+
+                let settings = Settings::load().unwrap_or_default();
+                let update_due = self
+                    .last_update_check
+                    .is_none_or(|checked| checked.elapsed() >= UPDATE_CHECK_INTERVAL);
+                if settings.check_updates && update_due && !self.update_check_in_flight {
+                    self.request_update_check(false);
+                }
+
                 if self.panel_visible {
                     self.push_state();
                 }
@@ -606,6 +746,19 @@ impl ApplicationHandler<UserEvent> for App {
                     Ok(()) => event_loop.exit(),
                     Err(err) => {
                         self.set_error(format!("Move failed: {err}"), 30);
+                        self.push_state();
+                    }
+                }
+            }
+            UserEvent::UpdateChecked { result, manual } => {
+                self.finish_update_check(result, manual);
+            }
+            UserEvent::UpdateInstalled { result } => {
+                self.update_install_in_flight = false;
+                match result {
+                    Ok(()) => event_loop.exit(),
+                    Err(err) => {
+                        self.set_error(format!("Update failed: {err}"), 30);
                         self.push_state();
                     }
                 }
@@ -633,6 +786,346 @@ impl ApplicationHandler<UserEvent> for App {
             _ => {}
         }
     }
+}
+
+fn version_parts(version: &str) -> Option<[u64; 3]> {
+    let normalized = version.trim().trim_start_matches('v');
+    let core = normalized.split_once('-').map_or(normalized, |(core, _)| core);
+    let mut parts = core.split('.');
+
+    Some([
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    ])
+}
+
+fn version_at_least(version: &str, minimum: &str) -> bool {
+    match (version_parts(version), version_parts(minimum)) {
+        (Some(version), Some(minimum)) => version >= minimum,
+        _ => false,
+    }
+}
+
+fn version_is_newer(candidate: &str, current: &str) -> bool {
+    match (version_parts(candidate), version_parts(current)) {
+        (Some(candidate), Some(current)) => candidate > current,
+        _ => false,
+    }
+}
+
+fn check_latest_release() -> Result<Option<UpdateInfo>> {
+    let user_agent = format!("NTFS-Manager/{}", env!("CARGO_PKG_VERSION"));
+    let output = Command::new("/usr/bin/curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "20",
+            "--header",
+            "Accept: application/vnd.github+json",
+            "--header",
+            &format!("User-Agent: {user_agent}"),
+            RELEASES_API_URL,
+        ])
+        .output()
+        .context("failed to check GitHub Releases")?;
+
+    if !output.status.success() {
+        bail!(
+            "GitHub Releases request failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let release: serde_json::Value =
+        serde_json::from_slice(&output.stdout).context("invalid GitHub release response")?;
+    let tag = release
+        .get("tag_name")
+        .and_then(serde_json::Value::as_str)
+        .context("latest release has no tag_name")?
+        .to_string();
+    let version = tag.trim_start_matches('v').to_string();
+
+    if !version_is_newer(&version, env!("CARGO_PKG_VERSION")) {
+        return Ok(None);
+    }
+
+    let assets = release
+        .get("assets")
+        .and_then(serde_json::Value::as_array)
+        .context("latest release has no assets")?;
+
+    let zip = assets
+        .iter()
+        .find(|asset| {
+            asset
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|name| name.ends_with("macOS-universal.zip"))
+        })
+        .context("latest release has no Universal macOS ZIP")?;
+
+    let zip_name = zip
+        .get("name")
+        .and_then(serde_json::Value::as_str)
+        .context("release ZIP has no name")?;
+    let zip_url = zip
+        .get("browser_download_url")
+        .and_then(serde_json::Value::as_str)
+        .context("release ZIP has no download URL")?
+        .to_string();
+
+    let checksum_name = format!("{zip_name}.sha256");
+    let checksum_url = assets
+        .iter()
+        .find_map(|asset| {
+            let name = asset.get("name")?.as_str()?;
+            if name == checksum_name {
+                asset.get("browser_download_url")?.as_str().map(str::to_string)
+            } else {
+                None
+            }
+        })
+        .context("latest release has no SHA-256 checksum asset")?;
+
+    Ok(Some(UpdateInfo {
+        version,
+        tag,
+        zip_url,
+        checksum_url,
+    }))
+}
+
+fn download_file(url: &str, destination: &Path) -> Result<()> {
+    let output = Command::new("/usr/bin/curl")
+        .args([
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--location",
+            "--connect-timeout",
+            "10",
+            "--max-time",
+            "300",
+            "--output",
+        ])
+        .arg(destination)
+        .arg(url)
+        .output()
+        .with_context(|| format!("failed to download {url}"))?;
+
+    if !output.status.success() {
+        bail!(
+            "download failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn sha256(path: &Path) -> Result<String> {
+    let output = Command::new("/usr/bin/shasum")
+        .args(["-a", "256"])
+        .arg(path)
+        .output()
+        .with_context(|| format!("failed to hash {}", path.display()))?;
+
+    if !output.status.success() {
+        bail!(
+            "SHA-256 failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .next()
+        .map(str::to_string)
+        .context("shasum returned no digest")
+}
+
+fn plist_value(app: &Path, key: &str) -> Result<String> {
+    let plist = app.join("Contents").join("Info.plist");
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-extract", key, "raw"])
+        .arg(&plist)
+        .output()
+        .with_context(|| format!("failed to inspect {}", plist.display()))?;
+
+    if !output.status.success() {
+        bail!(
+            "plutil failed for {key}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn verify_update_bundle(app: &Path, expected_version: &str) -> Result<()> {
+    verify_app_bundle(app)?;
+
+    let identifier = plist_value(app, "CFBundleIdentifier")?;
+    if identifier != "dev.step2.ntfs-manager" {
+        bail!("downloaded app has unexpected bundle identifier: {identifier}");
+    }
+
+    let version = plist_value(app, "CFBundleShortVersionString")?;
+    if version != expected_version {
+        bail!(
+            "downloaded app version {version} does not match expected {expected_version}"
+        );
+    }
+
+    Ok(())
+}
+
+fn copy_update_direct(source: &Path, destination: &Path, expected_version: &str) -> Result<()> {
+    let parent = destination
+        .parent()
+        .context("Applications destination has no parent")?;
+    let pid = std::process::id();
+    let staging = parent.join(format!(".NTFS Manager.update-{pid}.app"));
+    let backup = parent.join(format!(".NTFS Manager.backup-{pid}.app"));
+
+    let _ = fs::remove_dir_all(&staging);
+    let _ = fs::remove_dir_all(&backup);
+
+    let copy = Command::new("/usr/bin/ditto")
+        .arg(source)
+        .arg(&staging)
+        .output()
+        .context("failed to stage app update")?;
+
+    if !copy.status.success() {
+        bail!(
+            "cannot stage app update: {}",
+            String::from_utf8_lossy(&copy.stderr).trim()
+        );
+    }
+
+    verify_update_bundle(&staging, expected_version)?;
+
+    if destination.exists() {
+        fs::rename(destination, &backup).context("failed to move current app aside")?;
+    }
+
+    if let Err(err) = fs::rename(&staging, destination) {
+        if backup.exists() {
+            let _ = fs::rename(&backup, destination);
+        }
+        return Err(err).context("failed to activate app update");
+    }
+
+    let _ = fs::remove_dir_all(&backup);
+    Ok(())
+}
+
+fn copy_update_privileged(source: &Path, destination: &Path) -> Result<()> {
+    let parent = destination
+        .parent()
+        .context("Applications destination has no parent")?;
+    let pid = std::process::id();
+    let staging = parent.join(format!(".NTFS Manager.update-{pid}.app"));
+    let backup = parent.join(format!(".NTFS Manager.backup-{pid}.app"));
+
+    let command = format!(
+        "/bin/rm -rf {staging} {backup};          /usr/bin/ditto {source} {staging};          if [ -e {destination} ]; then /bin/mv {destination} {backup}; fi;          /bin/mv {staging} {destination};          /bin/rm -rf {backup}",
+        staging = shell_quote(&staging.to_string_lossy()),
+        backup = shell_quote(&backup.to_string_lossy()),
+        source = shell_quote(&source.to_string_lossy()),
+        destination = shell_quote(&destination.to_string_lossy()),
+    );
+
+    let script = r#"
+on run argv
+    do shell script (item 1 of argv) with administrator privileges
+end run
+"#;
+
+    let output = Command::new("/usr/bin/osascript")
+        .args(["-e", script, "--", &command])
+        .output()
+        .context("failed to request permission to install update")?;
+
+    if !output.status.success() {
+        bail!(
+            "privileged update failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(())
+}
+
+fn install_update(update: &UpdateInfo) -> Result<()> {
+    let destination = Path::new(APPLICATION_PATH);
+    if !is_installed_in_applications() {
+        bail!("NTFS Manager must be in /Applications before it can update itself");
+    }
+
+    let temp = env::temp_dir().join(format!(
+        "ntfs-manager-update-{}-{}",
+        std::process::id(),
+        update.version
+    ));
+    let _ = fs::remove_dir_all(&temp);
+    fs::create_dir_all(&temp)?;
+
+    let zip = temp.join("update.zip");
+    let checksum = temp.join("update.zip.sha256");
+    let extracted = temp.join("extracted");
+
+    download_file(&update.zip_url, &zip)?;
+    download_file(&update.checksum_url, &checksum)?;
+
+    let expected = fs::read_to_string(&checksum)
+        .context("failed to read downloaded checksum")?
+        .split_whitespace()
+        .next()
+        .context("downloaded checksum is empty")?
+        .to_ascii_lowercase();
+    let actual = sha256(&zip)?.to_ascii_lowercase();
+
+    if expected != actual {
+        bail!("downloaded update failed SHA-256 verification");
+    }
+
+    fs::create_dir_all(&extracted)?;
+    let unpack = Command::new("/usr/bin/ditto")
+        .args(["-x", "-k"])
+        .arg(&zip)
+        .arg(&extracted)
+        .output()
+        .context("failed to extract update")?;
+
+    if !unpack.status.success() {
+        bail!(
+            "failed to extract update: {}",
+            String::from_utf8_lossy(&unpack.stderr).trim()
+        );
+    }
+
+    let source = extracted.join("NTFS Manager.app");
+    if !source.exists() {
+        bail!("downloaded archive does not contain NTFS Manager.app");
+    }
+
+    verify_update_bundle(&source, &update.version)?;
+
+    if copy_update_direct(&source, destination, &update.version).is_err() {
+        copy_update_privileged(&source, destination)?;
+        verify_update_bundle(destination, &update.version)?;
+    }
+
+    let _ = fs::remove_dir_all(&temp);
+    open_installed_app(destination)
 }
 
 fn auto_repair_prompt_path() -> Result<PathBuf> {
