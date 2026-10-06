@@ -14,6 +14,7 @@ pub struct Settings {
     pub poll_interval_secs: u64,
     pub launch_at_login: bool,
     pub check_updates: bool,
+    pub locale: String,
 }
 
 impl Default for Settings {
@@ -23,6 +24,7 @@ impl Default for Settings {
             poll_interval_secs: 2,
             launch_at_login: true,
             check_updates: true,
+            locale: "uk".to_string(),
         }
     }
 }
@@ -95,11 +97,20 @@ impl Settings {
         Ok(settings)
     }
 
+    pub fn set_locale(locale: &str) -> Result<Self> {
+        let mut settings = Self::load().unwrap_or_default();
+        settings.locale = locale.to_string();
+        settings.save()?;
+        Ok(settings)
+    }
+
     fn validate(&self) -> Result<()> {
         if !(1..=60).contains(&self.poll_interval_secs) {
             bail!("poll_interval_secs must be between 1 and 60");
         }
-
+        if !matches!(self.locale.as_str(), "uk" | "en") {
+            bail!("locale must be uk or en");
+        }
         Ok(())
     }
 }
@@ -130,6 +141,7 @@ mod tests {
         assert_eq!(settings.poll_interval_secs, 2);
         assert!(settings.launch_at_login);
         assert!(settings.check_updates);
+        assert_eq!(settings.locale, "uk");
         assert!(settings.validate().is_ok());
     }
 
@@ -143,6 +155,7 @@ mod tests {
         assert_eq!(settings.poll_interval_secs, 5);
         assert!(settings.launch_at_login);
         assert!(settings.check_updates);
+        assert_eq!(settings.locale, "uk");
     }
 
     #[test]
@@ -152,6 +165,7 @@ mod tests {
             poll_interval_secs: 0,
             launch_at_login: true,
             check_updates: true,
+            locale: "uk".to_string(),
         };
 
         assert!(settings.validate().is_err());

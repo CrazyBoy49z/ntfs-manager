@@ -19,7 +19,7 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Arial,sans-serif;color:var(--text);user-select:none}
-button{font:inherit}
+button,select{font:inherit}
 .shell{
   margin:8px;
   height:calc(100% - 16px);
@@ -139,6 +139,7 @@ button{font:inherit}
 }
 .status-pill{font-size:9px;padding:3px 6px;border-radius:999px;background:#3a4046;color:#c9cdd2}
 .status-pill.ok{background:rgba(48,209,88,.16);color:#8af0a5}
+.locale-select{min-width:88px;border:0;border-radius:7px;padding:6px 28px 6px 9px;background:#3b4046;color:white;font-size:10.5px;cursor:pointer}
 .hidden{display:none!important}
 </style>
 </head>
@@ -166,102 +167,119 @@ button{font:inherit}
           </div>
           <div id="summary" class="subtitle">Loading…</div>
         </div>
-        <button class="icon-btn" onclick="showSettings()" title="Налаштування">⚙︎</button>
+        <button class="icon-btn" onclick="showSettings()" id="settingsButton" title="Налаштування">⚙︎</button>
       </div>
 
       <div id="errorBanner" class="banner"></div>
       <div id="updateBanner" class="update-banner">
-        <div class="update-title" id="updateTitle">Доступне оновлення</div>
+        <div class="update-title" id="updateTitle"></div>
         <div class="update-copy" id="updateCopy"></div>
         <div class="update-actions">
-          <button id="installUpdate" class="action primary" onclick="send('install-update')">Оновити</button>
-          <button id="dismissUpdate" class="action" onclick="send('dismiss-update')">Пізніше</button>
+          <button id="installUpdate" class="action primary" onclick="send('install-update')"></button>
+          <button id="dismissUpdate" class="action" onclick="send('dismiss-update')"></button>
         </div>
       </div>
 
       <div class="section-title">
-        <span id="diskCount">Підключені диски (0)</span>
-        <button class="icon-btn" style="width:24px;height:24px;font-size:14px" onclick="send('refresh')" title="Оновити">↻</button>
+        <span id="diskCount"></span>
+        <button class="icon-btn" style="width:24px;height:24px;font-size:14px" onclick="send('refresh')" id="refreshButton" title="Оновити">↻</button>
       </div>
       <div id="disks" class="disks"></div>
 
       <div id="quickActionsSection">
-        <div class="section-title"><span>Швидкі дії</span></div>
+        <div class="section-title"><span id="quickActionsTitle"></span></div>
         <div class="quick">
-          <button id="mountAll" class="action primary" onclick="send('mount-all')">▶ Mount all NTFS</button>
+          <button id="mountAll" class="action primary" onclick="send('mount-all')"></button>
         </div>
       </div>
 
       <div class="footer">
-        <button class="action" onclick="send('quit')">⏻ Quit</button>
+        <button class="action" onclick="send('quit')">⏻ <span id="quitLabelMain"></span></button>
       </div>
     </section>
 
     <section id="settingsView" class="view">
       <div class="settings-title">
         <button class="icon-btn" onclick="showMain()">‹</button>
-        <span>Налаштування</span>
+        <span id="settingsTitle"></span>
       </div>
 
-      <div class="section-title"><span>General</span></div>
+      <div class="section-title"><span id="generalTitle"></span></div>
       <div class="settings-group">
         <div class="row">
-          <div class="settings-copy"><div class="label">Auto-mount NTFS</div><div class="hint">Автоматично перемонтовувати NTFS у read/write</div></div>
+          <div class="settings-copy"><div class="label" id="autoMountLabel"></div><div class="hint" id="autoMountHint"></div></div>
           <label class="switch"><input id="settingsAutoMount" type="checkbox" onchange="send('set-auto-mount',{enabled:this.checked})"><span class="slider"></span></label>
         </div>
         <div class="row">
-          <div class="settings-copy"><div class="label">Запускати при вході</div><div class="hint">Показувати NTFS Manager після входу в macOS</div></div>
+          <div class="settings-copy"><div class="label" id="launchLabel"></div><div class="hint" id="launchHint"></div></div>
           <label class="switch"><input id="launchAtLogin" type="checkbox" onchange="send('set-launch-at-login',{enabled:this.checked})"><span class="slider"></span></label>
         </div>
         <div class="row">
-          <div class="settings-copy"><div class="label">Перевіряти оновлення</div><div class="hint">Автоматично перевіряти GitHub Releases і питати перед встановленням</div></div>
+          <div class="settings-copy"><div class="label" id="checkUpdatesLabel"></div><div class="hint" id="checkUpdatesHint"></div></div>
           <label class="switch"><input id="checkUpdates" type="checkbox" onchange="send('set-check-updates',{enabled:this.checked})"><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label" id="languageLabel"></div><div class="hint" id="languageHint"></div></div>
+          <select id="localeSelect" class="locale-select" onchange="send('set-locale',{locale:this.value})"><option value="uk">Українська</option><option value="en">English</option></select>
         </div>
       </div>
 
       <div id="componentsSection">
-        <div class="section-title"><span>Components</span></div>
+        <div class="section-title"><span id="componentsTitle"></span></div>
         <div class="settings-group">
           <div class="row">
-            <div class="settings-copy"><div class="label">Privileged helper</div><div class="hint" id="helperVersion">—</div></div>
+            <div class="settings-copy"><div class="label" id="helperLabel"></div><div class="hint" id="helperVersion">—</div></div>
             <span id="helperStatus" class="status-pill">Checking</span>
           </div>
           <div class="row">
-            <div class="settings-copy"><div class="label">Repair components</div><div class="hint">Оновити helper/agent без відкривання Terminal, коли залежності вже встановлені</div></div>
-            <button class="small-btn" onclick="send('repair')">Repair</button>
+            <div class="settings-copy"><div class="label" id="repairLabel"></div><div class="hint" id="repairHint"></div></div>
+            <button class="small-btn" onclick="send('repair')" id="repairButton"></button>
           </div>
         </div>
       </div>
 
-      <div class="section-title"><span>Updates</span></div>
+      <div class="section-title"><span id="updatesTitle"></span></div>
       <div class="settings-group">
         <div class="row">
-          <div class="settings-copy"><div class="label">Оновлення</div><div class="hint" id="updateStatus">Перевірити останню версію</div></div>
-          <button id="checkUpdateButton" class="small-btn" onclick="send('check-update-now')">Check</button>
+          <div class="settings-copy"><div class="label" id="updateLabel"></div><div class="hint" id="updateStatus"></div></div>
+          <button id="checkUpdateButton" class="small-btn" onclick="send('check-update-now')"></button>
         </div>
       </div>
 
-      <div class="section-title"><span>Advanced</span></div>
+      <div class="section-title"><span id="advancedTitle"></span></div>
       <div class="settings-group">
         <div id="moveRow" class="row">
-          <div class="settings-copy"><div class="label">Applications</div><div class="hint">Перемістити NTFS Manager у /Applications</div></div>
-          <button class="small-btn" onclick="send('move-to-applications')">Move</button>
+          <div class="settings-copy"><div class="label" id="applicationsLabel"></div><div class="hint" id="applicationsHint"></div></div>
+          <button class="small-btn" onclick="send('move-to-applications')" id="moveButton"></button>
         </div>
         <div class="row">
-          <div class="settings-copy"><div class="label">Логи</div><div class="hint">Відкрити папку з діагностикою</div></div>
-          <button class="small-btn" onclick="send('open-logs')">Open</button>
+          <div class="settings-copy"><div class="label" id="logsLabel"></div><div class="hint" id="logsHint"></div></div>
+          <button class="small-btn" onclick="send('open-logs')" id="openLogsButton"></button>
         </div>
       </div>
 
       <div class="footer">
-        <button class="action" onclick="showMain()">Готово</button>
-        <button class="action" onclick="send('quit')">Quit</button>
+        <button class="action" onclick="showMain()" id="doneButton"></button>
+        <button class="action" onclick="send('quit')" id="quitSettingsButton"></button>
       </div>
     </section>
   </div>
 </div>
 <script>
 let state=null;
+let locale='uk';
+const i18n={
+uk:{settings:'Налаштування',connected:'Підключені диски',empty:'Немає підключених зовнішніх дисків',quick:'Швидкі дії',mountAll:'▶ Змонтувати всі NTFS',quit:'Вийти',general:'Основні',auto:'Автомонтування NTFS',autoHint:'Автоматично перемонтовувати NTFS у режимі read/write',launch:'Запускати при вході',launchHint:'Запускати NTFS Manager після входу в macOS',checkUpdates:'Перевіряти оновлення',checkUpdatesHint:'Автоматично перевіряти GitHub Releases і питати перед встановленням',language:'Мова',languageHint:'Мова інтерфейсу NTFS Manager',components:'Компоненти',helper:'Привілейований helper',ready:'Готово',needsRepair:'Потрібне відновлення',notInstalled:'Не встановлено',repair:'Відновити компоненти',repairHint:'Оновити helper/agent без Terminal, якщо залежності вже встановлені',repairButton:'Відновити',updates:'Оновлення',update:'Оновлення',check:'Перевірити',advanced:'Додатково',apps:'Applications',appsHint:'Перемістити NTFS Manager у /Applications',move:'Перемістити',logs:'Логи',logsHint:'Відкрити папку з діагностикою',open:'Відкрити',done:'Готово',updateAvailable:'Доступне оновлення',installing:'Завантаження, перевірка та встановлення…',updateDescription:'NTFS Manager завантажить і перевірить оновлення, а потім перезапуститься.',later:'Пізніше',updating:'Оновлення…',available:'Доступна',checking:'Перевіряю…',upToDate:'Актуальна версія',readWrite:'Read/write',readOnly:'Тільки читання',notMounted:'Не змонтовано',mounted:'Змонтовано',mountRW:'▶ Змонтувати read/write',finder:'▣ Відкрити у Finder',unmount:'Відмонтувати',refresh:'Оновити'},
+en:{settings:'Settings',connected:'Connected disks',empty:'No external disks connected',quick:'Quick actions',mountAll:'▶ Mount all NTFS',quit:'Quit',general:'General',auto:'Auto-mount NTFS',autoHint:'Automatically remount NTFS volumes read/write',launch:'Launch at login',launchHint:'Launch NTFS Manager after signing in to macOS',checkUpdates:'Check for updates',checkUpdatesHint:'Automatically check GitHub Releases and ask before installing',language:'Language',languageHint:'NTFS Manager interface language',components:'Components',helper:'Privileged helper',ready:'Ready',needsRepair:'Needs repair',notInstalled:'Not installed',repair:'Repair components',repairHint:'Update helper/agent without Terminal when dependencies are already installed',repairButton:'Repair',updates:'Updates',update:'Update',check:'Check',advanced:'Advanced',apps:'Applications',appsHint:'Move NTFS Manager to /Applications',move:'Move',logs:'Logs',logsHint:'Open diagnostics folder',open:'Open',done:'Done',updateAvailable:'Update available',installing:'Downloading, verifying and installing…',updateDescription:'NTFS Manager will download and verify the update, then restart.',later:'Later',updating:'Updating…',available:'Available',checking:'Checking…',upToDate:'Up to date',readWrite:'Read/write',readOnly:'Read-only',notMounted:'Not mounted',mounted:'Mounted',mountRW:'▶ Mount read/write',finder:'▣ Open in Finder',unmount:'Unmount',refresh:'Refresh'}
+};
+function t(k){return i18n[locale]?.[k]??i18n.en[k]??k}
+function applyLocale(){
+ document.documentElement.lang=locale;
+ const map={settingsTitle:'settings',quickActionsTitle:'quick',generalTitle:'general',autoMountLabel:'auto',autoMountHint:'autoHint',launchLabel:'launch',launchHint:'launchHint',checkUpdatesLabel:'checkUpdates',checkUpdatesHint:'checkUpdatesHint',languageLabel:'language',languageHint:'languageHint',componentsTitle:'components',helperLabel:'helper',repairLabel:'repair',repairHint:'repairHint',repairButton:'repairButton',updatesTitle:'updates',updateLabel:'update',advancedTitle:'advanced',applicationsLabel:'apps',applicationsHint:'appsHint',moveButton:'move',logsLabel:'logs',logsHint:'logsHint',openLogsButton:'open',doneButton:'done',quitSettingsButton:'quit',quitLabelMain:'quit'};
+ for(const [id,key] of Object.entries(map)){const el=document.getElementById(id);if(el)el.textContent=t(key)}
+ document.getElementById('settingsButton').title=t('settings');document.getElementById('refreshButton').title=t('refresh');
+ if(state)renderState(state);
+}
 function send(action,payload={}){
   window.ipc.postMessage(JSON.stringify({action,...payload}));
 }
@@ -288,19 +306,19 @@ function toggleDisk(id){
 function renderVolumes(volumes){
   const root=document.getElementById('disks');
   root.innerHTML='';
-  document.getElementById('diskCount').textContent='Підключені диски ('+volumes.length+')';
+  document.getElementById('diskCount').textContent=t('connected')+' ('+volumes.length+')';
   if(!volumes.length){
-    root.innerHTML='<div class="empty">Немає підключених зовнішніх дисків</div>';
+    root.innerHTML='<div class="empty">'+t('empty')+'</div>';
     return;
   }
   volumes.forEach((v,i)=>{
     const open=!!v.mount_point;
-    const stateText=v.is_ntfs?(v.writable?'Read/write':(v.mounted?'Read-only':'Not mounted')):(v.mounted?'Mounted':'Not mounted');
+    const stateText=v.is_ntfs?(v.writable?t('readWrite'):(v.mounted?t('readOnly'):t('notMounted'))):(v.mounted?t('mounted'):t('notMounted'));
     const dot=v.is_ntfs?(v.writable?'green':(v.mounted?'amber':'')):'';
     const actions=[];
-    if(v.is_ntfs && !v.writable) actions.push('<button class="action primary" onclick="event.stopPropagation();send(\'mount\',{device:\''+esc(v.device)+'\'})">▶ Mount (read/write)</button>');
-    if(open) actions.push('<button class="action" onclick="event.stopPropagation();send(\'open-volume\',{device:\''+esc(v.device)+'\'})">▣ Open in Finder</button>');
-    if(v.is_ntfs && open) actions.push('<button class="action danger" onclick="event.stopPropagation();send(\'unmount\',{device:\''+esc(v.device)+'\'})">Unmount</button>');
+    if(v.is_ntfs && !v.writable) actions.push('<button class="action primary" onclick="event.stopPropagation();send(\'mount\',{device:\''+esc(v.device)+'\'})">'+t('mountRW')+'</button>');
+    if(open) actions.push('<button class="action" onclick="event.stopPropagation();send(\'open-volume\',{device:\''+esc(v.device)+'\'})">'+t('finder')+'</button>');
+    if(v.is_ntfs && open) actions.push('<button class="action danger" onclick="event.stopPropagation();send(\'unmount\',{device:\''+esc(v.device)+'\'})">'+t('unmount')+'</button>');
     const fs=esc(v.filesystem || (v.is_ntfs?'NTFS':'Disk'));
     const size=fmtBytes(v.size_bytes);
     const id='disk-'+i;
@@ -316,17 +334,16 @@ function renderVolumes(volumes){
       '</div>');
   });
 }
-window.ntfsManager={
-  updateState(next){
-    state=next;
+function renderState(next){
     document.getElementById('summary').textContent=next.summary || 'NTFS Manager';
     document.getElementById('headerVersion').textContent='v'+next.version;
     document.getElementById('settingsAutoMount').checked=!!next.auto_mount;
     document.getElementById('launchAtLogin').checked=!!next.launch_at_login;
     document.getElementById('checkUpdates').checked=!!next.check_updates;
-    document.getElementById('helperVersion').textContent=next.helper_version ? 'v'+next.helper_version : 'Not installed';
+    document.getElementById('localeSelect').value=locale;
+    document.getElementById('helperVersion').textContent=next.helper_version ? 'v'+next.helper_version : t('notInstalled');
     const hs=document.getElementById('helperStatus');
-    hs.textContent=next.helper_ready?'Ready':'Needs repair';
+    hs.textContent=next.helper_ready?t('ready'):t('needsRepair');
     hs.className='status-pill'+(next.helper_ready?' ok':'');
     document.getElementById('componentsSection').classList.toggle('hidden',!!next.helper_ready);
     document.getElementById('moveRow').style.display=next.installed_in_applications?'none':'flex';
@@ -344,20 +361,21 @@ window.ntfsManager={
 
     if(next.update_available){
       updateBanner.classList.add('show');
-      updateTitle.textContent='Доступне оновлення v'+next.update_available.version;
+      updateTitle.textContent=t('updateAvailable')+' v'+next.update_available.version;
       updateCopy.textContent=next.update_installing
-        ? 'Завантаження, перевірка та встановлення…'
-        : 'NTFS Manager завантажить і перевірить оновлення, а потім перезапуститься.';
+        ? t('installing')
+        : t('updateDescription');
       installUpdate.disabled=!!next.update_installing;
       dismissUpdate.disabled=!!next.update_installing;
-      installUpdate.textContent=next.update_installing?'Оновлення…':'Оновити';
-      updateStatus.textContent='Доступна v'+next.update_available.version;
-      checkUpdateButton.textContent='Update';
+      installUpdate.textContent=next.update_installing?t('updating'):t('update');
+      dismissUpdate.textContent=t('later');
+      updateStatus.textContent=t('available')+' v'+next.update_available.version;
+      checkUpdateButton.textContent=t('update');
       checkUpdateButton.onclick=()=>send('install-update');
     }else{
       updateBanner.classList.remove('show');
-      updateStatus.textContent=next.update_checking?'Перевіряю…':'Up to date · v'+next.version;
-      checkUpdateButton.textContent=next.update_checking?'…':'Check';
+      updateStatus.textContent=next.update_checking?t('checking'):t('upToDate')+' · v'+next.version;
+      checkUpdateButton.textContent=next.update_checking?'…':t('check');
       checkUpdateButton.disabled=!!next.update_checking;
       checkUpdateButton.onclick=()=>send('check-update-now');
     }
@@ -369,9 +387,10 @@ window.ntfsManager={
     const quickActionsSection=document.getElementById('quickActionsSection');
     quickActionsSection.classList.toggle('hidden',!canMount);
     mountAll.disabled=!next.helper_ready || next.action_in_flight || !canMount;
-    mountAll.textContent='▶ Mount all NTFS ('+ntfs.filter(v=>!v.writable).length+')';
-  }
-};
+    mountAll.textContent=t('mountAll')+' ('+ntfs.filter(v=>!v.writable).length+')';
+}
+window.ntfsManager={updateState(next){state=next;locale=next.locale==='en'?'en':'uk';applyLocale();}};
+applyLocale();
 send('ready');
 </script>
 </body>
