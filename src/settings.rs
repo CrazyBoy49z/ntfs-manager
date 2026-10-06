@@ -24,7 +24,7 @@ impl Default for Settings {
             poll_interval_secs: 2,
             launch_at_login: true,
             check_updates: true,
-            locale: "uk".to_string(),
+            locale: "en".to_string(),
         }
     }
 }
@@ -141,7 +141,7 @@ mod tests {
         assert_eq!(settings.poll_interval_secs, 2);
         assert!(settings.launch_at_login);
         assert!(settings.check_updates);
-        assert_eq!(settings.locale, "uk");
+        assert_eq!(settings.locale, "en");
         assert!(settings.validate().is_ok());
     }
 
@@ -155,7 +155,7 @@ mod tests {
         assert_eq!(settings.poll_interval_secs, 5);
         assert!(settings.launch_at_login);
         assert!(settings.check_updates);
-        assert_eq!(settings.locale, "uk");
+        assert_eq!(settings.locale, "en");
     }
 
     #[test]
