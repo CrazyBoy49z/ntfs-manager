@@ -42,6 +42,15 @@ jobs:
           bash -n scripts/*.sh
           python3 -m py_compile scripts/*.py
           test -s assets/panel.html
+          python3 -m json.tool assets/i18n/uk.json >/dev/null
+          python3 -m json.tool assets/i18n/en.json >/dev/null
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          uk = json.loads(Path("assets/i18n/uk.json").read_text())
+          en = json.loads(Path("assets/i18n/en.json").read_text())
+          assert set(uk) == set(en), f"locale key mismatch: uk-only={set(uk)-set(en)}, en-only={set(en)-set(uk)}"
+          PY
 
       - name: Validate launchd plists
         run: |

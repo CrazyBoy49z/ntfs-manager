@@ -27,6 +27,8 @@ use wry::{WebView, WebViewBuilder};
 
 const APPLICATION_PATH: &str = "/Applications/NTFS Manager.app";
 const PANEL_HTML: &str = include_str!("../../assets/panel.html");
+const I18N_UK: &str = include_str!("../../assets/i18n/uk.json");
+const I18N_EN: &str = include_str!("../../assets/i18n/en.json");
 const PANEL_WIDTH: f64 = 390.0;
 const PANEL_INITIAL_HEIGHT: f64 = 300.0;
 const PANEL_MIN_HEIGHT: f64 = 260.0;
@@ -94,7 +96,6 @@ struct UiCommand {
 #[derive(Serialize)]
 struct UiState<'a> {
     version: &'static str,
-    summary: String,
     auto_mount: bool,
     launch_at_login: bool,
     check_updates: bool,
@@ -181,9 +182,13 @@ impl App {
             )
             .context("failed to create NTFS Manager popover")?;
 
+        let panel_html = PANEL_HTML
+            .replace("__I18N_UK__", I18N_UK)
+            .replace("__I18N_EN__", I18N_EN);
+
         let ipc_proxy = self.proxy.clone();
         let webview = WebViewBuilder::new()
-            .with_html(PANEL_HTML)
+            .with_html(panel_html)
             .with_transparent(true)
             .with_accept_first_mouse(true)
             .with_ipc_handler(move |request| {
@@ -256,39 +261,6 @@ impl App {
             .is_some_and(|version| version_at_least(version, MIN_HELPER_VERSION))
     }
 
-    fn summary(&self, locale: &str) -> String {
-        let ntfs = self
-            .volumes
-            .iter()
-            .filter(|volume| volume.is_ntfs)
-            .collect::<Vec<_>>();
-
-        if ntfs.is_empty() {
-            return match locale {
-                "en" => "No NTFS volumes connected".to_string(),
-                _ => "NTFS-диски не підключені".to_string(),
-            };
-        }
-
-        let mounted = ntfs.iter().filter(|volume| volume.mounted).count();
-        let writable = ntfs.iter().filter(|volume| volume.writable).count();
-
-        match locale {
-            "en" => format!(
-                "{} NTFS · {} mounted · {} read/write",
-                ntfs.len(),
-                mounted,
-                writable
-            ),
-            _ => format!(
-                "{} NTFS · {} змонтовано · {} read/write",
-                ntfs.len(),
-                mounted,
-                writable
-            ),
-        }
-    }
-
     fn current_error(&mut self) -> Option<String> {
         match self.status_override.as_ref() {
             Some((message, until)) if Instant::now() < *until => Some(message.clone()),
@@ -305,7 +277,6 @@ impl App {
         let error = self.current_error();
         let state = UiState {
             version: env!("CARGO_PKG_VERSION"),
-            summary: self.summary(&settings.locale),
             auto_mount: settings.auto_mount,
             launch_at_login: settings.launch_at_login,
             check_updates: settings.check_updates,
@@ -683,7 +654,7 @@ impl App {
                 self.update_available = None;
                 if manual {
                     self.status_override = Some((
-                        "У вас остання версія NTFS Manager".to_string(),
+                        "i18n:latestVersion".to_string(),
                         Instant::now() + Duration::from_secs(5),
                     ));
                 }
