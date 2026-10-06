@@ -44,6 +44,8 @@ button{font:inherit}
 .header-copy{min-width:0;flex:1}
 .title{font-weight:700;font-size:15px;line-height:18px}
 .subtitle{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.title-line{display:flex;align-items:center;gap:7px;min-width:0}
+.version-badge{font-size:9.5px;color:var(--muted);font-weight:600;white-space:nowrap}
 .icon-btn{
   width:31px;height:31px;border:0;border-radius:8px;background:transparent;color:#c8cbd0;
   display:grid;place-items:center;font-size:18px;cursor:pointer
@@ -116,8 +118,8 @@ button{font:inherit}
 .update-copy{font-size:10.5px;color:#c7d8ec;margin-top:3px;line-height:1.35}
 .update-actions{display:flex;gap:7px;margin-top:9px}
 .update-actions button{flex:1}
-.footer{display:flex;gap:7px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
-.footer button{flex:1}
+.footer{display:flex;justify-content:flex-end;gap:7px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
+.footer button{flex:0 0 auto;min-width:92px}
 .empty{
   padding:18px 8px;text-align:center;border:1px dashed rgba(255,255,255,.12);
   border-radius:10px;color:var(--muted);font-size:12px
@@ -137,6 +139,7 @@ button{font:inherit}
 }
 .status-pill{font-size:9px;padding:3px 6px;border-radius:999px;background:#3a4046;color:#c9cdd2}
 .status-pill.ok{background:rgba(48,209,88,.16);color:#8af0a5}
+.hidden{display:none!important}
 </style>
 </head>
 <body>
@@ -157,7 +160,10 @@ button{font:inherit}
           </svg>
         </div>
         <div class="header-copy">
-          <div class="title">NTFS Manager</div>
+          <div class="title-line">
+            <div class="title">NTFS Manager</div>
+            <div id="headerVersion" class="version-badge">—</div>
+          </div>
           <div id="summary" class="subtitle">Loading…</div>
         </div>
         <button class="icon-btn" onclick="showSettings()" title="Налаштування">⚙︎</button>
@@ -173,28 +179,20 @@ button{font:inherit}
         </div>
       </div>
 
-      <div class="row">
-        <div class="label">Auto-mount</div>
-        <label class="switch">
-          <input id="autoMount" type="checkbox" onchange="send('set-auto-mount',{enabled:this.checked})">
-          <span class="slider"></span>
-        </label>
-      </div>
-
       <div class="section-title">
         <span id="diskCount">Підключені диски (0)</span>
         <button class="icon-btn" style="width:24px;height:24px;font-size:14px" onclick="send('refresh')" title="Оновити">↻</button>
       </div>
       <div id="disks" class="disks"></div>
 
-      <div class="section-title"><span>Швидкі дії</span></div>
-      <div class="quick">
-        <button id="mountAll" class="action primary" onclick="send('mount-all')">▶ Mount all NTFS</button>
-        <button class="action" onclick="send('refresh')">↻ Refresh</button>
+      <div id="quickActionsSection">
+        <div class="section-title"><span>Швидкі дії</span></div>
+        <div class="quick">
+          <button id="mountAll" class="action primary" onclick="send('mount-all')">▶ Mount all NTFS</button>
+        </div>
       </div>
 
       <div class="footer">
-        <button class="action" onclick="showSettings()">⚙ Settings</button>
         <button class="action" onclick="send('quit')">⏻ Quit</button>
       </div>
     </section>
@@ -221,19 +219,29 @@ button{font:inherit}
         </div>
       </div>
 
-      <div class="section-title"><span>Components</span></div>
-      <div class="settings-group">
-        <div class="row">
-          <div class="settings-copy"><div class="label">Privileged helper</div><div class="hint" id="helperVersion">—</div></div>
-          <span id="helperStatus" class="status-pill">Checking</span>
-        </div>
-        <div class="row">
-          <div class="settings-copy"><div class="label">Repair components</div><div class="hint">Оновити helper/agent без відкривання Terminal, коли залежності вже встановлені</div></div>
-          <button class="small-btn" onclick="send('repair')">Repair</button>
+      <div id="componentsSection">
+        <div class="section-title"><span>Components</span></div>
+        <div class="settings-group">
+          <div class="row">
+            <div class="settings-copy"><div class="label">Privileged helper</div><div class="hint" id="helperVersion">—</div></div>
+            <span id="helperStatus" class="status-pill">Checking</span>
+          </div>
+          <div class="row">
+            <div class="settings-copy"><div class="label">Repair components</div><div class="hint">Оновити helper/agent без відкривання Terminal, коли залежності вже встановлені</div></div>
+            <button class="small-btn" onclick="send('repair')">Repair</button>
+          </div>
         </div>
       </div>
 
-      <div class="section-title"><span>Application</span></div>
+      <div class="section-title"><span>Updates</span></div>
+      <div class="settings-group">
+        <div class="row">
+          <div class="settings-copy"><div class="label">Оновлення</div><div class="hint" id="updateStatus">Перевірити останню версію</div></div>
+          <button id="checkUpdateButton" class="small-btn" onclick="send('check-update-now')">Check</button>
+        </div>
+      </div>
+
+      <div class="section-title"><span>Advanced</span></div>
       <div class="settings-group">
         <div id="moveRow" class="row">
           <div class="settings-copy"><div class="label">Applications</div><div class="hint">Перемістити NTFS Manager у /Applications</div></div>
@@ -242,13 +250,6 @@ button{font:inherit}
         <div class="row">
           <div class="settings-copy"><div class="label">Логи</div><div class="hint">Відкрити папку з діагностикою</div></div>
           <button class="small-btn" onclick="send('open-logs')">Open</button>
-        </div>
-        <div class="row">
-          <div class="settings-copy"><div class="label">Оновлення</div><div class="hint" id="updateStatus">Перевірити останню версію</div></div>
-          <button id="checkUpdateButton" class="small-btn" onclick="send('check-update-now')">Check</button>
-        </div>
-        <div class="row">
-          <div class="settings-copy"><div class="label">Версія</div><div class="hint" id="version">—</div></div>
         </div>
       </div>
 
@@ -319,15 +320,15 @@ window.ntfsManager={
   updateState(next){
     state=next;
     document.getElementById('summary').textContent=next.summary || 'NTFS Manager';
-    document.getElementById('autoMount').checked=!!next.auto_mount;
+    document.getElementById('headerVersion').textContent='v'+next.version;
     document.getElementById('settingsAutoMount').checked=!!next.auto_mount;
     document.getElementById('launchAtLogin').checked=!!next.launch_at_login;
     document.getElementById('checkUpdates').checked=!!next.check_updates;
-    document.getElementById('version').textContent='v'+next.version;
     document.getElementById('helperVersion').textContent=next.helper_version ? 'v'+next.helper_version : 'Not installed';
     const hs=document.getElementById('helperStatus');
     hs.textContent=next.helper_ready?'Ready':'Needs repair';
     hs.className='status-pill'+(next.helper_ready?' ok':'');
+    document.getElementById('componentsSection').classList.toggle('hidden',!!next.helper_ready);
     document.getElementById('moveRow').style.display=next.installed_in_applications?'none':'flex';
     const banner=document.getElementById('errorBanner');
     banner.textContent=next.error || '';
@@ -355,7 +356,7 @@ window.ntfsManager={
       checkUpdateButton.onclick=()=>send('install-update');
     }else{
       updateBanner.classList.remove('show');
-      updateStatus.textContent=next.update_checking?'Перевіряю…':'Встановлено v'+next.version;
+      updateStatus.textContent=next.update_checking?'Перевіряю…':'Up to date · v'+next.version;
       checkUpdateButton.textContent=next.update_checking?'…':'Check';
       checkUpdateButton.disabled=!!next.update_checking;
       checkUpdateButton.onclick=()=>send('check-update-now');
@@ -365,6 +366,8 @@ window.ntfsManager={
     const ntfs=(next.volumes||[]).filter(v=>v.is_ntfs);
     const canMount=ntfs.some(v=>!v.writable);
     const mountAll=document.getElementById('mountAll');
+    const quickActionsSection=document.getElementById('quickActionsSection');
+    quickActionsSection.classList.toggle('hidden',!canMount);
     mountAll.disabled=!next.helper_ready || next.action_in_flight || !canMount;
     mountAll.textContent='▶ Mount all NTFS ('+ntfs.filter(v=>!v.writable).length+')';
   }
