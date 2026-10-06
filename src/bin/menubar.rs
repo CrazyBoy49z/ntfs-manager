@@ -726,7 +726,7 @@ impl ApplicationHandler<UserEvent> for App {
                 let settings = Settings::load().unwrap_or_default();
                 let update_due = self
                     .last_update_check
-                    .is_none_or(|checked| checked.elapsed() >= UPDATE_CHECK_INTERVAL);
+                    .map_or(true, |checked| checked.elapsed() >= UPDATE_CHECK_INTERVAL);
                 if settings.check_updates && update_due && !self.update_check_in_flight {
                     self.request_update_check(false);
                 }
