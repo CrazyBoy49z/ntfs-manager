@@ -165,9 +165,9 @@ button,select{font:inherit}
             <div class="title">NTFS Manager</div>
             <div id="headerVersion" class="version-badge">—</div>
           </div>
-          <div id="summary" class="subtitle">Loading…</div>
+          <div id="summary" class="subtitle"></div>
         </div>
-        <button class="icon-btn" onclick="showSettings()" id="settingsButton" title="Налаштування">⚙︎</button>
+        <button class="icon-btn" onclick="showSettings()" id="settingsButton" title="">⚙︎</button>
       </div>
 
       <div id="errorBanner" class="banner"></div>
@@ -182,7 +182,7 @@ button,select{font:inherit}
 
       <div class="section-title">
         <span id="diskCount"></span>
-        <button class="icon-btn" style="width:24px;height:24px;font-size:14px" onclick="send('refresh')" id="refreshButton" title="Оновити">↻</button>
+        <button class="icon-btn" style="width:24px;height:24px;font-size:14px" onclick="send('refresh')" id="refreshButton" title="">↻</button>
       </div>
       <div id="disks" class="disks"></div>
 
@@ -268,17 +268,34 @@ button,select{font:inherit}
 <script>
 let state=null;
 let locale='uk';
-const i18n={
-uk:{settings:'Налаштування',connected:'Підключені диски',empty:'Немає підключених зовнішніх дисків',quick:'Швидкі дії',mountAll:'▶ Змонтувати всі NTFS',quit:'Вийти',general:'Основні',auto:'Автомонтування NTFS',autoHint:'Автоматично перемонтовувати NTFS у режимі read/write',launch:'Запускати при вході',launchHint:'Запускати NTFS Manager після входу в macOS',checkUpdates:'Перевіряти оновлення',checkUpdatesHint:'Автоматично перевіряти GitHub Releases і питати перед встановленням',language:'Мова',languageHint:'Мова інтерфейсу NTFS Manager',components:'Компоненти',helper:'Привілейований helper',ready:'Готово',needsRepair:'Потрібне відновлення',notInstalled:'Не встановлено',repair:'Відновити компоненти',repairHint:'Оновити helper/agent без Terminal, якщо залежності вже встановлені',repairButton:'Відновити',updates:'Оновлення',update:'Оновлення',check:'Перевірити',advanced:'Додатково',apps:'Applications',appsHint:'Перемістити NTFS Manager у /Applications',move:'Перемістити',logs:'Логи',logsHint:'Відкрити папку з діагностикою',open:'Відкрити',done:'Готово',updateAvailable:'Доступне оновлення',installing:'Завантаження, перевірка та встановлення…',updateDescription:'NTFS Manager завантажить і перевірить оновлення, а потім перезапуститься.',later:'Пізніше',updating:'Оновлення…',available:'Доступна',checking:'Перевіряю…',upToDate:'Актуальна версія',readWrite:'Read/write',readOnly:'Тільки читання',notMounted:'Не змонтовано',mounted:'Змонтовано',mountRW:'▶ Змонтувати read/write',finder:'▣ Відкрити у Finder',unmount:'Відмонтувати',refresh:'Оновити'},
-en:{settings:'Settings',connected:'Connected disks',empty:'No external disks connected',quick:'Quick actions',mountAll:'▶ Mount all NTFS',quit:'Quit',general:'General',auto:'Auto-mount NTFS',autoHint:'Automatically remount NTFS volumes read/write',launch:'Launch at login',launchHint:'Launch NTFS Manager after signing in to macOS',checkUpdates:'Check for updates',checkUpdatesHint:'Automatically check GitHub Releases and ask before installing',language:'Language',languageHint:'NTFS Manager interface language',components:'Components',helper:'Privileged helper',ready:'Ready',needsRepair:'Needs repair',notInstalled:'Not installed',repair:'Repair components',repairHint:'Update helper/agent without Terminal when dependencies are already installed',repairButton:'Repair',updates:'Updates',update:'Update',check:'Check',advanced:'Advanced',apps:'Applications',appsHint:'Move NTFS Manager to /Applications',move:'Move',logs:'Logs',logsHint:'Open diagnostics folder',open:'Open',done:'Done',updateAvailable:'Update available',installing:'Downloading, verifying and installing…',updateDescription:'NTFS Manager will download and verify the update, then restart.',later:'Later',updating:'Updating…',available:'Available',checking:'Checking…',upToDate:'Up to date',readWrite:'Read/write',readOnly:'Read-only',notMounted:'Not mounted',mounted:'Mounted',mountRW:'▶ Mount read/write',finder:'▣ Open in Finder',unmount:'Unmount',refresh:'Refresh'}
-};
+const i18n={uk:__I18N_UK__,en:__I18N_EN__};
 function t(k){return i18n[locale]?.[k]??i18n.en[k]??k}
+function tf(k,values={}){
+  return Object.entries(values).reduce(
+    (text,[key,value])=>text.replaceAll('{'+key+'}',String(value)),
+    t(k)
+  );
+}
+function localizeMessage(message){
+  if(!message) return '';
+  return message.startsWith('i18n:')?t(message.slice(5)):message;
+}
+function summaryText(volumes=[]){
+  const ntfs=volumes.filter(volume=>volume.is_ntfs);
+  if(!ntfs.length) return t('summaryNoNtfs');
+  return tf('summaryNtfs',{
+    total:ntfs.length,
+    mounted:ntfs.filter(volume=>volume.mounted).length,
+    writable:ntfs.filter(volume=>volume.writable).length
+  });
+}
 function applyLocale(){
  document.documentElement.lang=locale;
  const map={settingsTitle:'settings',quickActionsTitle:'quick',generalTitle:'general',autoMountLabel:'auto',autoMountHint:'autoHint',launchLabel:'launch',launchHint:'launchHint',checkUpdatesLabel:'checkUpdates',checkUpdatesHint:'checkUpdatesHint',languageLabel:'language',languageHint:'languageHint',componentsTitle:'components',helperLabel:'helper',repairLabel:'repair',repairHint:'repairHint',repairButton:'repairButton',updatesTitle:'updates',updateLabel:'update',advancedTitle:'advanced',applicationsLabel:'apps',applicationsHint:'appsHint',moveButton:'move',logsLabel:'logs',logsHint:'logsHint',openLogsButton:'open',doneButton:'done',quitSettingsButton:'quit',quitLabelMain:'quit'};
  for(const [id,key] of Object.entries(map)){const el=document.getElementById(id);if(el)el.textContent=t(key)}
  document.getElementById('settingsButton').title=t('settings');document.getElementById('refreshButton').title=t('refresh');
  if(state)renderState(state);
+ else document.getElementById('summary').textContent=t('loading');
 }
 function send(action,payload={}){
   window.ipc.postMessage(JSON.stringify({action,...payload}));
@@ -350,7 +367,7 @@ function renderVolumes(volumes){
   requestResize();
 }
 function renderState(next){
-    document.getElementById('summary').textContent=next.summary || 'NTFS Manager';
+    document.getElementById('summary').textContent=summaryText(next.volumes || []);
     document.getElementById('headerVersion').textContent='v'+next.version;
     document.getElementById('settingsAutoMount').checked=!!next.auto_mount;
     document.getElementById('launchAtLogin').checked=!!next.launch_at_login;
@@ -363,8 +380,9 @@ function renderState(next){
     document.getElementById('componentsSection').classList.toggle('hidden',!!next.helper_ready);
     document.getElementById('moveRow').style.display=next.installed_in_applications?'none':'flex';
     const banner=document.getElementById('errorBanner');
-    banner.textContent=next.error || '';
-    banner.classList.toggle('show',!!next.error);
+    const localizedError=localizeMessage(next.error);
+    banner.textContent=localizedError;
+    banner.classList.toggle('show',!!localizedError);
 
     const updateBanner=document.getElementById('updateBanner');
     const updateTitle=document.getElementById('updateTitle');
@@ -375,8 +393,8 @@ function renderState(next){
     const updateError=document.getElementById('updateError');
     const checkUpdateButton=document.getElementById('checkUpdateButton');
 
-    updateError.textContent=next.error || '';
-    updateError.style.display=next.error?'block':'none';
+    updateError.textContent=localizedError;
+    updateError.style.display=localizedError?'block':'none';
 
     if(next.update_available){
       updateBanner.classList.add('show');
