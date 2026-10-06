@@ -56,6 +56,9 @@ jobs:
 
       - name: Verify host app
         run: |
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "$(plutil -extract CFBundleShortVersionString raw "dist/NTFS Manager.app/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleVersion raw "dist/NTFS Manager.app/Contents/Info.plist")" = "$VERSION"
           test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.icns"
           test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png"
           test -x "dist/NTFS Manager.app/Contents/Resources/repair-components.sh"
@@ -126,6 +129,9 @@ jobs:
       - name: Verify Universal app
         if: steps.release_meta.outputs.should_release == 'true'
         run: |
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "$(plutil -extract CFBundleShortVersionString raw "dist/NTFS Manager.app/Contents/Info.plist")" = "$VERSION"
+          test "$(plutil -extract CFBundleVersion raw "dist/NTFS Manager.app/Contents/Info.plist")" = "$VERSION"
           codesign --verify --deep --strict "dist/NTFS Manager.app"
           lipo -info "dist/NTFS Manager.app/Contents/MacOS/ntfs-manager-menubar"
           for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent; do
