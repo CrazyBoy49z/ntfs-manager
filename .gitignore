@@ -1,0 +1,5 @@
+/target
+/dist
+/universal-bin
+.DS_Store
+*.log

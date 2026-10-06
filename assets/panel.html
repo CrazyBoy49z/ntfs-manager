@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{
+  color-scheme:dark;
+  --bg:rgba(27,29,32,.965);
+  --card:#2a2d31;
+  --card2:#24272b;
+  --border:rgba(255,255,255,.09);
+  --muted:#9aa0a8;
+  --text:#f5f7fa;
+  --blue:#0a84ff;
+  --green:#30d158;
+  --red:#ff453a;
+  --amber:#ffd60a;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Arial,sans-serif;color:var(--text);user-select:none}
+button{font:inherit}
+.shell{
+  margin:8px;
+  height:calc(100% - 16px);
+  border-radius:17px;
+  overflow:hidden;
+  background:linear-gradient(180deg,rgba(47,50,54,.98),rgba(24,26,29,.98));
+  border:1px solid rgba(255,255,255,.13);
+  box-shadow:0 16px 44px rgba(0,0,0,.46);
+}
+.content{height:100%;overflow:auto;padding:14px}
+.content::-webkit-scrollbar{width:0}
+.header{display:flex;align-items:center;gap:11px;margin-bottom:13px}
+.app-icon{
+  width:38px;height:38px;border-radius:9px;
+  display:grid;place-items:center;
+  background:linear-gradient(145deg,#0c4d89,#091a2a);
+  border:1px solid rgba(255,255,255,.16);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.13);
+  flex:0 0 auto;
+}
+.drive{width:27px;height:27px}
+.header-copy{min-width:0;flex:1}
+.title{font-weight:700;font-size:15px;line-height:18px}
+.subtitle{font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.icon-btn{
+  width:31px;height:31px;border:0;border-radius:8px;background:transparent;color:#c8cbd0;
+  display:grid;place-items:center;font-size:18px;cursor:pointer
+}
+.icon-btn:hover{background:rgba(255,255,255,.08);color:white}
+.row{
+  display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:10px 2px;border-top:1px solid var(--border)
+}
+.label{font-size:13px}
+.section-title{
+  display:flex;align-items:center;justify-content:space-between;
+  margin:13px 0 8px;color:#a7acb4;font-size:11px;font-weight:650;
+  text-transform:uppercase;letter-spacing:.03em
+}
+.switch{position:relative;width:37px;height:22px;flex:0 0 auto}
+.switch input{display:none}
+.slider{
+  position:absolute;inset:0;border-radius:999px;background:#5a5e64;transition:.15s;cursor:pointer
+}
+.slider:after{
+  content:"";position:absolute;width:18px;height:18px;left:2px;top:2px;border-radius:50%;
+  background:white;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:.15s
+}
+.switch input:checked + .slider{background:var(--green)}
+.switch input:checked + .slider:after{transform:translateX(15px)}
+.disks{display:flex;flex-direction:column;gap:8px}
+.disk{
+  border:1px solid var(--border);border-radius:12px;background:var(--card2);overflow:hidden;
+  transition:border-color .15s,background .15s
+}
+.disk.ntfs{background:linear-gradient(180deg,#2b3035,#24282d)}
+.disk-head{display:flex;align-items:center;gap:9px;padding:10px;cursor:pointer}
+.dot{width:8px;height:8px;border-radius:50%;background:#747b84;flex:0 0 auto}
+.dot.green{background:var(--green);box-shadow:0 0 8px rgba(48,209,88,.45)}
+.dot.amber{background:var(--amber)}
+.fs-icon{
+  width:32px;height:32px;border-radius:7px;background:linear-gradient(#dce1e6,#8d969e);
+  color:#1d252d;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.7),0 1px 2px rgba(0,0,0,.4)
+}
+.disk-copy{min-width:0;flex:1}
+.disk-name{font-size:13px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.disk-meta{font-size:10.5px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chev{font-size:15px;color:#a8adb4;transition:transform .15s}
+.disk.open .chev{transform:rotate(180deg)}
+.disk-actions{display:none;gap:7px;padding:0 10px 10px}
+.disk.open .disk-actions{display:flex}
+.action{
+  border:0;border-radius:8px;padding:7px 10px;font-size:11.5px;cursor:pointer;color:white;
+  background:#3a3f45;flex:1;white-space:nowrap
+}
+.action.primary{background:var(--blue)}
+.action.danger{background:#4a3030}
+.action:disabled{opacity:.45;cursor:default}
+.quick{display:flex;gap:7px}
+.quick .action{padding:8px}
+.banner{
+  display:none;margin:0 0 10px;padding:9px 10px;border-radius:9px;
+  background:rgba(255,69,58,.13);border:1px solid rgba(255,69,58,.32);color:#ffd7d3;
+  font-size:10.5px;line-height:1.35
+}
+.banner.show{display:block}
+.footer{display:flex;gap:7px;margin-top:12px;padding-top:10px;border-top:1px solid var(--border)}
+.footer button{flex:1}
+.empty{
+  padding:18px 8px;text-align:center;border:1px dashed rgba(255,255,255,.12);
+  border-radius:10px;color:var(--muted);font-size:12px
+}
+.view{display:none}.view.active{display:block}
+.settings-title{display:flex;align-items:center;gap:7px;font-size:15px;font-weight:700;margin-bottom:12px}
+.settings-group{
+  border:1px solid var(--border);border-radius:11px;overflow:hidden;background:var(--card2);margin-bottom:10px
+}
+.settings-group .row{padding:10px;border-top:1px solid var(--border)}
+.settings-group .row:first-child{border-top:0}
+.settings-copy{min-width:0;flex:1}
+.settings-copy .label{font-size:12.5px}
+.hint{font-size:10px;color:var(--muted);margin-top:2px}
+.small-btn{
+  border:0;border-radius:7px;padding:6px 8px;background:#3b4046;color:white;font-size:10.5px;cursor:pointer
+}
+.status-pill{font-size:9px;padding:3px 6px;border-radius:999px;background:#3a4046;color:#c9cdd2}
+.status-pill.ok{background:rgba(48,209,88,.16);color:#8af0a5}
+</style>
+</head>
+<body>
+<div class="shell">
+  <div class="content">
+    <section id="mainView" class="view active">
+      <div class="header">
+        <div class="app-icon">
+          <svg class="drive" viewBox="0 0 64 64" aria-hidden="true">
+            <defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop stop-color="#f8fafc"/><stop offset="1" stop-color="#aeb7c0"/></linearGradient></defs>
+            <path d="M17 10h30l7 34H10l7-34Z" fill="url(#g)" stroke="#fff" stroke-width="2"/>
+            <rect x="9" y="41" width="46" height="13" rx="4" fill="#727b84" stroke="#b6bec5"/>
+            <rect x="20" y="46" width="24" height="4" rx="2" fill="#17202a"/>
+            <circle cx="15" cy="47.5" r="2.5" fill="#0a84ff"/>
+            <circle cx="49" cy="47.5" r="2.5" fill="#30d158"/>
+            <rect x="18" y="23" width="28" height="11" rx="3" fill="#24578d"/>
+            <text x="32" y="31" text-anchor="middle" font-size="8" font-weight="800" fill="white">NTFS</text>
+          </svg>
+        </div>
+        <div class="header-copy">
+          <div class="title">NTFS Manager</div>
+          <div id="summary" class="subtitle">Loading…</div>
+        </div>
+        <button class="icon-btn" onclick="showSettings()" title="Налаштування">⚙︎</button>
+      </div>
+
+      <div id="errorBanner" class="banner"></div>
+
+      <div class="row">
+        <div class="label">Auto-mount</div>
+        <label class="switch">
+          <input id="autoMount" type="checkbox" onchange="send('set-auto-mount',{enabled:this.checked})">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div class="section-title">
+        <span id="diskCount">Підключені диски (0)</span>
+        <button class="icon-btn" style="width:24px;height:24px;font-size:14px" onclick="send('refresh')" title="Оновити">↻</button>
+      </div>
+      <div id="disks" class="disks"></div>
+
+      <div class="section-title"><span>Швидкі дії</span></div>
+      <div class="quick">
+        <button id="mountAll" class="action primary" onclick="send('mount-all')">▶ Mount all NTFS</button>
+        <button class="action" onclick="send('refresh')">↻ Refresh</button>
+      </div>
+
+      <div class="footer">
+        <button class="action" onclick="showSettings()">⚙ Settings</button>
+        <button class="action" onclick="send('quit')">⏻ Quit</button>
+      </div>
+    </section>
+
+    <section id="settingsView" class="view">
+      <div class="settings-title">
+        <button class="icon-btn" onclick="showMain()">‹</button>
+        <span>Налаштування</span>
+      </div>
+
+      <div class="section-title"><span>General</span></div>
+      <div class="settings-group">
+        <div class="row">
+          <div class="settings-copy"><div class="label">Auto-mount NTFS</div><div class="hint">Автоматично перемонтовувати NTFS у read/write</div></div>
+          <label class="switch"><input id="settingsAutoMount" type="checkbox" onchange="send('set-auto-mount',{enabled:this.checked})"><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label">Запускати при вході</div><div class="hint">Показувати NTFS Manager після входу в macOS</div></div>
+          <label class="switch"><input id="launchAtLogin" type="checkbox" onchange="send('set-launch-at-login',{enabled:this.checked})"><span class="slider"></span></label>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label">Перевіряти оновлення</div><div class="hint">Відкривати сторінку останнього релізу вручну</div></div>
+          <label class="switch"><input id="checkUpdates" type="checkbox" onchange="send('set-check-updates',{enabled:this.checked})"><span class="slider"></span></label>
+        </div>
+      </div>
+
+      <div class="section-title"><span>Components</span></div>
+      <div class="settings-group">
+        <div class="row">
+          <div class="settings-copy"><div class="label">Privileged helper</div><div class="hint" id="helperVersion">—</div></div>
+          <span id="helperStatus" class="status-pill">Checking</span>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label">Repair components</div><div class="hint">Оновити helper/agent без відкривання Terminal, коли залежності вже встановлені</div></div>
+          <button class="small-btn" onclick="send('repair')">Repair</button>
+        </div>
+      </div>
+
+      <div class="section-title"><span>Application</span></div>
+      <div class="settings-group">
+        <div id="moveRow" class="row">
+          <div class="settings-copy"><div class="label">Applications</div><div class="hint">Перемістити NTFS Manager у /Applications</div></div>
+          <button class="small-btn" onclick="send('move-to-applications')">Move</button>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label">Логи</div><div class="hint">Відкрити папку з діагностикою</div></div>
+          <button class="small-btn" onclick="send('open-logs')">Open</button>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label">Оновлення</div><div class="hint">GitHub Releases</div></div>
+          <button class="small-btn" onclick="send('check-update-now')">Check</button>
+        </div>
+        <div class="row">
+          <div class="settings-copy"><div class="label">Версія</div><div class="hint" id="version">—</div></div>
+        </div>
+      </div>
+
+      <div class="footer">
+        <button class="action" onclick="showMain()">Готово</button>
+        <button class="action" onclick="send('quit')">Quit</button>
+      </div>
+    </section>
+  </div>
+</div>
+<script>
+let state=null;
+function send(action,payload={}){
+  window.ipc.postMessage(JSON.stringify({action,...payload}));
+}
+function esc(v){
+  return String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+}
+function fmtBytes(v){
+  if(!v) return '';
+  if(v>=1e12) return (v/1e12).toFixed(1)+' TB';
+  if(v>=1e9) return Math.round(v/1e9)+' GB';
+  return Math.round(v/1e6)+' MB';
+}
+function showSettings(){
+  document.getElementById('mainView').classList.remove('active');
+  document.getElementById('settingsView').classList.add('active');
+}
+function showMain(){
+  document.getElementById('settingsView').classList.remove('active');
+  document.getElementById('mainView').classList.add('active');
+}
+function toggleDisk(id){
+  document.getElementById(id)?.classList.toggle('open');
+}
+function renderVolumes(volumes){
+  const root=document.getElementById('disks');
+  root.innerHTML='';
+  document.getElementById('diskCount').textContent='Підключені диски ('+volumes.length+')';
+  if(!volumes.length){
+    root.innerHTML='<div class="empty">Немає підключених зовнішніх дисків</div>';
+    return;
+  }
+  volumes.forEach((v,i)=>{
+    const open=!!v.mount_point;
+    const stateText=v.is_ntfs?(v.writable?'Read/write':(v.mounted?'Read-only':'Not mounted')):(v.mounted?'Mounted':'Not mounted');
+    const dot=v.is_ntfs?(v.writable?'green':(v.mounted?'amber':'')):'';
+    const actions=[];
+    if(v.is_ntfs && !v.writable) actions.push('<button class="action primary" onclick="event.stopPropagation();send(\'mount\',{device:\''+esc(v.device)+'\'})">▶ Mount (read/write)</button>');
+    if(open) actions.push('<button class="action" onclick="event.stopPropagation();send(\'open-volume\',{device:\''+esc(v.device)+'\'})">▣ Open in Finder</button>');
+    if(v.is_ntfs && open) actions.push('<button class="action danger" onclick="event.stopPropagation();send(\'unmount\',{device:\''+esc(v.device)+'\'})">Unmount</button>');
+    const fs=esc(v.filesystem || (v.is_ntfs?'NTFS':'Disk'));
+    const size=fmtBytes(v.size_bytes);
+    const id='disk-'+i;
+    root.insertAdjacentHTML('beforeend',
+      '<div id="'+id+'" class="disk '+(v.is_ntfs?'ntfs ':'')+(v.is_ntfs?'open':'')+'">'+
+      '<div class="disk-head" onclick="toggleDisk(\''+id+'\')">'+
+      '<span class="dot '+dot+'"></span>'+
+      '<div class="fs-icon">'+fs.replace(/[^A-Za-z0-9]/g,'').slice(0,5).toUpperCase()+'</div>'+
+      '<div class="disk-copy"><div class="disk-name">'+esc(v.name || v.device)+'</div>'+
+      '<div class="disk-meta">/dev/'+esc(v.device)+' · '+fs+(size?' · '+size:'')+' · '+stateText+'</div></div>'+
+      '<span class="chev">⌄</span></div>'+
+      (actions.length?'<div class="disk-actions">'+actions.join('')+'</div>':'')+
+      '</div>');
+  });
+}
+window.ntfsManager={
+  updateState(next){
+    state=next;
+    document.getElementById('summary').textContent=next.summary || 'NTFS Manager';
+    document.getElementById('autoMount').checked=!!next.auto_mount;
+    document.getElementById('settingsAutoMount').checked=!!next.auto_mount;
+    document.getElementById('launchAtLogin').checked=!!next.launch_at_login;
+    document.getElementById('checkUpdates').checked=!!next.check_updates;
+    document.getElementById('version').textContent='v'+next.version;
+    document.getElementById('helperVersion').textContent=next.helper_version ? 'v'+next.helper_version : 'Not installed';
+    const hs=document.getElementById('helperStatus');
+    hs.textContent=next.helper_ready?'Ready':'Needs repair';
+    hs.className='status-pill'+(next.helper_ready?' ok':'');
+    document.getElementById('moveRow').style.display=next.installed_in_applications?'none':'flex';
+    const banner=document.getElementById('errorBanner');
+    banner.textContent=next.error || '';
+    banner.classList.toggle('show',!!next.error);
+    renderVolumes(next.volumes || []);
+    const ntfs=(next.volumes||[]).filter(v=>v.is_ntfs);
+    const canMount=ntfs.some(v=>!v.writable);
+    const mountAll=document.getElementById('mountAll');
+    mountAll.disabled=!next.helper_ready || next.action_in_flight || !canMount;
+    mountAll.textContent='▶ Mount all NTFS ('+ntfs.filter(v=>!v.writable).length+')';
+  }
+};
+send('ready');
+</script>
+</body>
+</html>
