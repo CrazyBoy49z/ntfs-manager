@@ -57,7 +57,7 @@ fi
 launchctl bootstrap system /Library/LaunchDaemons/dev.step2.ntfs-manager.helper.plist
 launchctl bootstrap "gui/$UID_NOW" "$LAUNCH_AGENTS/dev.step2.ntfs-manager.agent.plist"
 
-touch "$STATE_DIR/installed-v0.4.2"
-chown "$UID_NOW:$GID_NOW" "$STATE_DIR/installed-v0.4.2"
+touch "$STATE_DIR/installed-v0.5.0"
+chown "$UID_NOW:$GID_NOW" "$STATE_DIR/installed-v0.5.0"
 
 echo "NTFS Manager components repaired successfully."
