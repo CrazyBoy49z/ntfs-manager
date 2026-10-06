@@ -76,7 +76,6 @@ struct UpdateInfo {
     checksum_url: String,
 }
 
-
 #[derive(Debug, Deserialize)]
 struct UiCommand {
     action: String,
@@ -448,8 +447,10 @@ impl App {
             "check-update-now" => self.request_update_check(true),
             "install-update" => self.start_update(),
             "dismiss-update" => {
-                self.dismissed_update_version =
-                    self.update_available.as_ref().map(|update| update.version.clone());
+                self.dismissed_update_version = self
+                    .update_available
+                    .as_ref()
+                    .map(|update| update.version.clone());
                 self.update_available = None;
                 self.push_state();
             }
@@ -676,7 +677,10 @@ impl App {
         };
 
         if !is_installed_in_applications() {
-            self.set_error("Move NTFS Manager to /Applications before updating".to_string(), 20);
+            self.set_error(
+                "Move NTFS Manager to /Applications before updating".to_string(),
+                20,
+            );
             self.push_state();
             return;
         }
@@ -690,7 +694,6 @@ impl App {
             let _ = proxy.send_event(UserEvent::UpdateInstalled { result });
         });
     }
-
 }
 
 impl ApplicationHandler<UserEvent> for App {
@@ -790,7 +793,9 @@ impl ApplicationHandler<UserEvent> for App {
 
 fn version_parts(version: &str) -> Option<[u64; 3]> {
     let normalized = version.trim().trim_start_matches('v');
-    let core = normalized.split_once('-').map_or(normalized, |(core, _)| core);
+    let core = normalized
+        .split_once('-')
+        .map_or(normalized, |(core, _)| core);
     let mut parts = core.split('.');
 
     Some([
@@ -886,7 +891,10 @@ fn check_latest_release() -> Result<Option<UpdateInfo>> {
         .find_map(|asset| {
             let name = asset.get("name")?.as_str()?;
             if name == checksum_name {
-                asset.get("browser_download_url")?.as_str().map(str::to_string)
+                asset
+                    .get("browser_download_url")?
+                    .as_str()
+                    .map(str::to_string)
             } else {
                 None
             }
@@ -978,9 +986,7 @@ fn verify_update_bundle(app: &Path, expected_version: &str) -> Result<()> {
 
     let version = plist_value(app, "CFBundleShortVersionString")?;
     if version != expected_version {
-        bail!(
-            "downloaded app version {version} does not match expected {expected_version}"
-        );
+        bail!("downloaded app version {version} does not match expected {expected_version}");
     }
 
     Ok(())
