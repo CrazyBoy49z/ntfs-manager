@@ -8,6 +8,12 @@ ICON_WORK="$ROOT/dist/icon-build"
 ICON_ORIGINAL="$ROOT/assets/NTFSManager.png"
 ICON_SOURCE="$ICON_WORK/NTFSManager-transparent.png"
 ICONSET="$ICON_WORK/NTFSManager.iconset"
+VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
+
+if [[ -z "$VERSION" ]]; then
+    echo "Could not resolve package version from Cargo.toml" >&2
+    exit 1
+fi
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "package-app.sh requires macOS" >&2
@@ -63,7 +69,7 @@ make_icon 1024 icon_512x512@2x.png
 /usr/bin/iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/NTFSManager.icns"
 install -m 0644 "$ICON_SOURCE" "$APP/Contents/Resources/NTFSManager.png"
 
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -85,9 +91,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.5.0</string>
+    <string>$VERSION</string>
     <key>CFBundleVersion</key>
-    <string>16</string>
+    <string>$VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>11.0</string>
     <key>LSUIElement</key>
@@ -99,6 +105,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 /usr/bin/plutil -lint "$APP/Contents/Info.plist" >/dev/null
+test "$(/usr/bin/plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist")" = "$VERSION"
+test "$(/usr/bin/plutil -extract CFBundleVersion raw "$APP/Contents/Info.plist")" = "$VERSION"
 
 if command -v /usr/bin/codesign >/dev/null 2>&1; then
     /usr/bin/codesign         --force         --deep         --sign "${CODESIGN_IDENTITY:--}"         "$APP"
