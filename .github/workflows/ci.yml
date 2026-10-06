@@ -9,6 +9,7 @@ on:
   pull_request:
     branches:
       - master
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -64,7 +65,7 @@ jobs:
           codesign --verify --deep --strict "dist/NTFS Manager.app"
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     needs: test
     runs-on: macos-latest
 
@@ -82,11 +83,17 @@ jobs:
         with:
           key: release-universal
 
-      - name: Verify tag matches Cargo version
+      - name: Resolve release tag
         shell: bash
         run: |
           VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          test "v$VERSION" = "$GITHUB_REF_NAME"
+          TAG="v$VERSION"
+
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test "$TAG" = "$GITHUB_REF_NAME"
+          fi
+
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Build Apple Silicon
         run: cargo build --release --all-features --target aarch64-apple-darwin
@@ -117,7 +124,7 @@ jobs:
 
       - name: Create ZIP and checksum
         run: |
-          ZIP="dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
+          ZIP="dist/NTFS-Manager-$RELEASE_TAG-macOS-universal.zip"
           ditto             -c             -k             --sequesterRsrc             --keepParent             "dist/NTFS Manager.app"             "$ZIP"
 
           HASH="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
@@ -127,5 +134,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ZIP="dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
-          gh release create "$GITHUB_REF_NAME"             "$ZIP"             "$ZIP.sha256"             --title "NTFS Manager $GITHUB_REF_NAME"             --generate-notes             --latest
+          ZIP="dist/NTFS-Manager-$RELEASE_TAG-macOS-universal.zip"
+          gh release create "$RELEASE_TAG"             "$ZIP"             "$ZIP.sha256"             --title "NTFS Manager $RELEASE_TAG"             --generate-notes             --latest             --target "$GITHUB_SHA"
