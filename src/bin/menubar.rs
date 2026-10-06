@@ -28,7 +28,9 @@ use wry::{WebView, WebViewBuilder};
 const APPLICATION_PATH: &str = "/Applications/NTFS Manager.app";
 const PANEL_HTML: &str = include_str!("../../assets/panel.html");
 const PANEL_WIDTH: f64 = 390.0;
-const PANEL_HEIGHT: f64 = 590.0;
+const PANEL_INITIAL_HEIGHT: f64 = 300.0;
+const PANEL_MIN_HEIGHT: f64 = 260.0;
+const PANEL_MAX_HEIGHT: f64 = 590.0;
 const MIN_HELPER_VERSION: &str = "0.4.2";
 const RELEASES_API_URL: &str =
     "https://api.github.com/repos/CrazyBoy49z/ntfs-manager/releases/latest";
@@ -85,6 +87,8 @@ struct UiCommand {
     enabled: Option<bool>,
     #[serde(default)]
     locale: Option<String>,
+    #[serde(default)]
+    height: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -165,9 +169,9 @@ impl App {
             .create_window(
                 Window::default_attributes()
                     .with_title("NTFS Manager")
-                    .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
-                    .with_min_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
-                    .with_max_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_HEIGHT))
+                    .with_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_INITIAL_HEIGHT))
+                    .with_min_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_MIN_HEIGHT))
+                    .with_max_inner_size(LogicalSize::new(PANEL_WIDTH, PANEL_MAX_HEIGHT))
                     .with_resizable(false)
                     .with_decorations(false)
                     .with_transparent(true)
@@ -393,6 +397,12 @@ impl App {
         };
 
         match command.action.as_str() {
+            "resize" => {
+                if let (Some(window), Some(height)) = (self.window.as_ref(), command.height) {
+                    let height = height.clamp(PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT);
+                    let _ = window.request_inner_size(LogicalSize::new(PANEL_WIDTH, height));
+                }
+            }
             "ready" | "refresh" => {
                 self.request_refresh();
                 self.push_state();

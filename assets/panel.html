@@ -283,6 +283,16 @@ function applyLocale(){
 function send(action,payload={}){
   window.ipc.postMessage(JSON.stringify({action,...payload}));
 }
+let resizeFrame=0;
+function requestResize(){
+  cancelAnimationFrame(resizeFrame);
+  resizeFrame=requestAnimationFrame(()=>{
+    const active=document.querySelector('.view.active');
+    if(!active) return;
+    const height=Math.ceil(active.scrollHeight+44);
+    send('resize',{height});
+  });
+}
 function esc(v){
   return String(v ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
 }
@@ -295,13 +305,16 @@ function fmtBytes(v){
 function showSettings(){
   document.getElementById('mainView').classList.remove('active');
   document.getElementById('settingsView').classList.add('active');
+  requestResize();
 }
 function showMain(){
   document.getElementById('settingsView').classList.remove('active');
   document.getElementById('mainView').classList.add('active');
+  requestResize();
 }
 function toggleDisk(id){
   document.getElementById(id)?.classList.toggle('open');
+  requestResize();
 }
 function renderVolumes(volumes){
   const root=document.getElementById('disks');
@@ -309,6 +322,7 @@ function renderVolumes(volumes){
   document.getElementById('diskCount').textContent=t('connected')+' ('+volumes.length+')';
   if(!volumes.length){
     root.innerHTML='<div class="empty">'+t('empty')+'</div>';
+    requestResize();
     return;
   }
   volumes.forEach((v,i)=>{
@@ -333,6 +347,7 @@ function renderVolumes(volumes){
       (actions.length?'<div class="disk-actions">'+actions.join('')+'</div>':'')+
       '</div>');
   });
+  requestResize();
 }
 function renderState(next){
     document.getElementById('summary').textContent=next.summary || 'NTFS Manager';
@@ -395,9 +410,11 @@ function renderState(next){
     quickActionsSection.classList.toggle('hidden',!canMount);
     mountAll.disabled=!next.helper_ready || next.action_in_flight || !canMount;
     mountAll.textContent=t('mountAll')+' ('+ntfs.filter(v=>!v.writable).length+')';
+    requestResize();
 }
 window.ntfsManager={updateState(next){state=next;locale=next.locale==='en'?'en':'uk';applyLocale();}};
 applyLocale();
+requestResize();
 send('ready');
 </script>
 </body>
