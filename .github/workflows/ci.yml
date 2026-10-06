@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Tests
+        run: cargo test --all-features
+
+      - name: Build
+        run: cargo build --release --all-features
+
+      - name: Validate scripts
+        run: |
+          bash -n scripts/*.sh
+          python3 -m py_compile scripts/*.py
+          test -s assets/panel.html
+
+      - name: Validate launchd plists
+        run: |
+          plutil -lint packaging/dev.step2.ntfs-manager.helper.plist
+          sed "s|__HOME__|$HOME|g" packaging/dev.step2.ntfs-manager.agent.plist > /tmp/ntfs-agent.plist
+          sed "s|__HOME__|$HOME|g" packaging/dev.step2.ntfs-manager.menubar.plist > /tmp/ntfs-menubar.plist
+          plutil -lint /tmp/ntfs-agent.plist
+          plutil -lint /tmp/ntfs-menubar.plist
+
+      - name: Package host app
+        run: bash scripts/package-app.sh
+
+      - name: Verify host app
+        run: |
+          test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.icns"
+          test -s "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png"
+          test -x "dist/NTFS Manager.app/Contents/Resources/repair-components.sh"
+          sips -g hasAlpha "dist/NTFS Manager.app/Contents/Resources/NTFSManager.png" | grep -q "hasAlpha: yes"
+          codesign --verify --deep --strict "dist/NTFS Manager.app"
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-universal
+
+      - name: Verify tag matches Cargo version
+        shell: bash
+        run: |
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "v$VERSION" = "$GITHUB_REF_NAME"
+
+      - name: Build Apple Silicon
+        run: cargo build --release --all-features --target aarch64-apple-darwin
+
+      - name: Build Intel
+        run: cargo build --release --all-features --target x86_64-apple-darwin
+
+      - name: Create Universal binaries
+        run: |
+          mkdir -p universal-bin
+          for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent ntfs-manager-menubar; do
+            lipo -create               "target/aarch64-apple-darwin/release/$binary"               "target/x86_64-apple-darwin/release/$binary"               -output "universal-bin/$binary"
+            chmod +x "universal-bin/$binary"
+          done
+
+      - name: Package Universal app
+        env:
+          NTFS_MANAGER_BINARY_DIR: ${{ github.workspace }}/universal-bin
+        run: bash scripts/package-app.sh
+
+      - name: Verify Universal app
+        run: |
+          codesign --verify --deep --strict "dist/NTFS Manager.app"
+          lipo -info "dist/NTFS Manager.app/Contents/MacOS/ntfs-manager-menubar"
+          for binary in ntfs-manager ntfs-manager-helper ntfs-manager-agent; do
+            lipo -info "dist/NTFS Manager.app/Contents/Resources/bin/$binary"
+          done
+
+      - name: Create ZIP and checksum
+        run: |
+          ZIP="dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
+          ditto             -c             -k             --sequesterRsrc             --keepParent             "dist/NTFS Manager.app"             "$ZIP"
+
+          HASH="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
+          printf '%s  %s\n' "$HASH" "$(basename "$ZIP")" > "$ZIP.sha256"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ZIP="dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
+          gh release create "$GITHUB_REF_NAME"             "$ZIP"             "$ZIP.sha256"             --title "NTFS Manager $GITHUB_REF_NAME"             --generate-notes             --latest

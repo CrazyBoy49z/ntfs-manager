@@ -1,0 +1,46 @@
+[package]
+name = "ntfs-manager"
+version = "0.5.0"
+edition = "2021"
+description = "Safe macOS NTFS read/write manager powered by macFUSE and ntfs-3g"
+license = "MIT"
+repository = "https://github.com/CrazyBoy49z/ntfs-manager"
+rust-version = "1.80"
+default-run = "ntfs-manager"
+
+[features]
+default = []
+menubar = ["dep:tray-icon", "dep:winit", "dep:wry"]
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+libc = "0.2"
+plist = "1.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tray-icon = { version = "0.26", optional = true }
+winit = { version = "0.30.13", optional = true }
+wry = { version = "0.56.1", optional = true }
+
+[[bin]]
+name = "ntfs-manager"
+path = "src/main.rs"
+
+[[bin]]
+name = "ntfs-manager-helper"
+path = "src/bin/helper.rs"
+
+[[bin]]
+name = "ntfs-manager-agent"
+path = "src/bin/agent.rs"
+
+[[bin]]
+name = "ntfs-manager-menubar"
+path = "src/bin/menubar.rs"
+required-features = ["menubar"]
+
+[dev-dependencies]
+tempfile = "3.13"
