@@ -115,12 +115,17 @@ jobs:
             lipo -info "dist/NTFS Manager.app/Contents/Resources/bin/$binary"
           done
 
-      - name: Create ZIP
+      - name: Create ZIP and checksum
         run: |
-          ditto             -c             -k             --sequesterRsrc             --keepParent             "dist/NTFS Manager.app"             "dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
+          ZIP="dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
+          ditto             -c             -k             --sequesterRsrc             --keepParent             "dist/NTFS Manager.app"             "$ZIP"
+
+          HASH="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
+          printf '%s  %s\n' "$HASH" "$(basename "$ZIP")" > "$ZIP.sha256"
 
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME"             "dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"             --title "NTFS Manager $GITHUB_REF_NAME"             --generate-notes             --latest
+          ZIP="dist/NTFS-Manager-$GITHUB_REF_NAME-macOS-universal.zip"
+          gh release create "$GITHUB_REF_NAME"             "$ZIP"             "$ZIP.sha256"             --title "NTFS Manager $GITHUB_REF_NAME"             --generate-notes             --latest
