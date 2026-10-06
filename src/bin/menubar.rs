@@ -83,6 +83,8 @@ struct UiCommand {
     device: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
+    #[serde(default)]
+    locale: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -92,6 +94,7 @@ struct UiState<'a> {
     auto_mount: bool,
     launch_at_login: bool,
     check_updates: bool,
+    locale: &'a str,
     installed_in_applications: bool,
     helper_ready: bool,
     helper_version: Option<&'a str>,
@@ -249,7 +252,7 @@ impl App {
             .is_some_and(|version| version_at_least(version, MIN_HELPER_VERSION))
     }
 
-    fn summary(&self) -> String {
+    fn summary(&self, locale: &str) -> String {
         let ntfs = self
             .volumes
             .iter()
@@ -257,18 +260,19 @@ impl App {
             .collect::<Vec<_>>();
 
         if ntfs.is_empty() {
-            return "No NTFS volumes connected".to_string();
+            return match locale {
+                "en" => "No NTFS volumes connected".to_string(),
+                _ => "NTFS-диски не підключені".to_string(),
+            };
         }
 
         let mounted = ntfs.iter().filter(|volume| volume.mounted).count();
         let writable = ntfs.iter().filter(|volume| volume.writable).count();
 
-        format!(
-            "{} NTFS · {} mounted · {} read/write",
-            ntfs.len(),
-            mounted,
-            writable
-        )
+        match locale {
+            "en" => format!("{} NTFS · {} mounted · {} read/write", ntfs.len(), mounted, writable),
+            _ => format!("{} NTFS · {} змонтовано · {} read/write", ntfs.len(), mounted, writable),
+        }
     }
 
     fn current_error(&mut self) -> Option<String> {
@@ -287,10 +291,11 @@ impl App {
         let error = self.current_error();
         let state = UiState {
             version: env!("CARGO_PKG_VERSION"),
-            summary: self.summary(),
+            summary: self.summary(&settings.locale),
             auto_mount: settings.auto_mount,
             launch_at_login: settings.launch_at_login,
             check_updates: settings.check_updates,
+            locale: &settings.locale,
             installed_in_applications: is_installed_in_applications(),
             helper_ready: self.helper_is_compatible(),
             helper_version: self.helper_version.as_deref(),
@@ -406,6 +411,14 @@ impl App {
                     }
                     if enabled {
                         self.request_update_check(false);
+                    }
+                    self.push_state();
+                }
+            }
+            "set-locale" => {
+                if let Some(locale) = command.locale.as_deref() {
+                    if let Err(err) = Settings::set_locale(locale) {
+                        self.set_error(format!("Settings error: {err}"), 20);
                     }
                     self.push_state();
                 }
