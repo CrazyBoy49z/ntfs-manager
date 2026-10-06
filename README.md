@@ -5,6 +5,7 @@ A lightweight macOS menu-bar app for mounting NTFS volumes read/write with **mac
 - Native menu-bar workflow with a compact custom popover
 - One-click NTFS read/write mount and unmount
 - Optional automatic mounting
+- Built-in verified updates with confirmation before installation
 - Intel and Apple Silicon support
 - Safe privileged helper with a narrow Unix-socket API
 - No SIP changes and no replacement of Apple's `/sbin/mount_ntfs`
@@ -67,16 +68,36 @@ The popover shows connected external volumes and provides NTFS-specific actions:
 - **Mount all NTFS**
 - **Auto-mount**
 
-Non-NTFS disks such as FAT32 and exFAT can be shown for context, but NTFS Manager does not try to manage them as NTFS.
+Non-NTFS physical disks such as FAT32 and exFAT can be shown for context, but NTFS Manager does not try to manage them as NTFS. macOS system disk images, Cryptex volumes, virtual APFS assets, and system-mounted volumes are filtered out of the connected-disk list.
 
 Settings include:
 
 - Auto-mount
 - Launch at login
 - Component repair
-- Update check
+- Automatic update checks
+- One-click verified updates
 - Open logs
 - Move to Applications
+
+## Updates
+
+When **Check for updates** is enabled, NTFS Manager checks GitHub Releases on launch and periodically in the background.
+
+If a newer release exists, the app shows an **Update / Later** confirmation inside the popover. Nothing is downloaded or installed until **Update** is clicked.
+
+The updater then:
+
+1. downloads the Universal macOS ZIP and its published SHA-256 file;
+2. verifies the downloaded archive checksum;
+3. extracts the app;
+4. verifies the bundle signature, bundle identifier, and expected version;
+5. replaces `/Applications/NTFS Manager.app`;
+6. relaunches the new version automatically.
+
+A normal app-only update does not reinstall the privileged helper just because the app version changed. The existing helper remains valid while it satisfies the minimum compatible helper version, which avoids unnecessary administrator-password prompts. If a future release requires a newer helper protocol, NTFS Manager will request repair only when it is actually needed.
+
+> The first release containing the in-app updater still has to be installed manually. After that, supported releases can update themselves from inside the app.
 
 ## How it works
 
