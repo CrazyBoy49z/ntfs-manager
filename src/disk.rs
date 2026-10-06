@@ -74,11 +74,7 @@ impl DiskService {
                 continue;
             };
 
-            let is_external = volume.internal == Some(false) || volume.removable == Some(true);
-            let has_filesystem =
-                volume.filesystem_type.is_some() || volume.filesystem_name.is_some();
-
-            if is_external && has_filesystem {
+            if is_user_visible_external_volume(&volume) {
                 volumes.push(volume.into_disk_volume());
             }
         }
@@ -176,6 +172,8 @@ impl DiskService {
             size_bytes: integer_value(dict, "TotalSize"),
             internal: bool_value(dict, "Internal"),
             removable: bool_value(dict, "RemovableMedia"),
+            virtual_or_physical: string_value(dict, "VirtualOrPhysical"),
+            disk_image: bool_value(dict, "DiskImage"),
             filesystem_type,
             filesystem_name,
             is_ntfs,
@@ -193,6 +191,8 @@ struct VolumeInfo {
     size_bytes: Option<u64>,
     internal: Option<bool>,
     removable: Option<bool>,
+    virtual_or_physical: Option<String>,
+    disk_image: Option<bool>,
     filesystem_type: Option<String>,
     filesystem_name: Option<String>,
     is_ntfs: bool,
@@ -232,6 +232,48 @@ impl VolumeInfo {
             removable: self.removable,
         }
     }
+}
+
+fn is_user_visible_external_volume(volume: &VolumeInfo) -> bool {
+    let is_external = volume.internal == Some(false) || volume.removable == Some(true);
+    let has_filesystem =
+        volume.filesystem_type.is_some() || volume.filesystem_name.is_some();
+
+    if !is_external || !has_filesystem {
+        return false;
+    }
+
+    if volume.disk_image == Some(true) {
+        return false;
+    }
+
+    if volume
+        .virtual_or_physical
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case("virtual"))
+    {
+        return false;
+    }
+
+    if volume.mount_point.as_deref().is_some_and(|mount_point| {
+        mount_point == "/System"
+            || mount_point.starts_with("/System/")
+            || mount_point == "/private/var"
+            || mount_point.starts_with("/private/var/")
+    }) {
+        return false;
+    }
+
+    if volume.name.as_deref().is_some_and(|name| {
+        let normalized = name.to_ascii_lowercase();
+        normalized.starts_with("creedence")
+            || normalized.contains("securepkitruststore")
+            || normalized.contains("cryptex")
+    }) {
+        return false;
+    }
+
+    true
 }
 
 fn string_value(dict: &plist::Dictionary, key: &str) -> Option<String> {
@@ -293,6 +335,67 @@ fn is_partition_identifier(device: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_volume(
+        name: Option<&str>,
+        mount_point: Option<&str>,
+        internal: Option<bool>,
+        removable: Option<bool>,
+        virtual_or_physical: Option<&str>,
+        disk_image: Option<bool>,
+    ) -> VolumeInfo {
+        VolumeInfo {
+            device: "disk3s1".to_string(),
+            name: name.map(ToOwned::to_owned),
+            mounted: mount_point.is_some(),
+            writable: true,
+            mount_point: mount_point.map(ToOwned::to_owned),
+            size_bytes: Some(1_000_000_000),
+            internal,
+            removable,
+            virtual_or_physical: virtual_or_physical.map(ToOwned::to_owned),
+            disk_image,
+            filesystem_type: Some("apfs".to_string()),
+            filesystem_name: Some("APFS".to_string()),
+            is_ntfs: false,
+        }
+    }
+
+    #[test]
+    fn hides_system_cryptex_and_virtual_disk_images() {
+        let creedence = test_volume(
+            Some("Creedence11M6270.SECUREPKITRUSTSTOREASSET"),
+            Some("/System/Volumes/Preboot/Cryptexes/Incoming"),
+            Some(false),
+            Some(false),
+            Some("Virtual"),
+            Some(true),
+        );
+        assert!(!is_user_visible_external_volume(&creedence));
+
+        let generic_disk_image = test_volume(
+            Some("Mounted DMG"),
+            Some("/Volumes/Mounted DMG"),
+            Some(false),
+            Some(false),
+            Some("Virtual"),
+            Some(true),
+        );
+        assert!(!is_user_visible_external_volume(&generic_disk_image));
+    }
+
+    #[test]
+    fn keeps_real_external_storage() {
+        let usb = test_volume(
+            Some("My Passport"),
+            Some("/Volumes/My Passport"),
+            Some(false),
+            Some(true),
+            Some("Physical"),
+            Some(false),
+        );
+        assert!(is_user_visible_external_volume(&usb));
+    }
 
     #[test]
     fn detects_real_ntfs_filesystems() {
