@@ -1,5 +1,6 @@
 use std::{
     env, fs,
+    os::fd::AsRawFd,
     path::{Path, PathBuf},
     process::Command,
     thread,
@@ -1135,7 +1136,7 @@ fn install_update(update: &UpdateInfo) -> Result<()> {
     }
 
     let _ = fs::remove_dir_all(&temp);
-    open_installed_app(destination)
+    schedule_relaunch_app(destination)
 }
 
 fn auto_repair_prompt_path() -> Result<PathBuf> {
@@ -1308,7 +1309,7 @@ fn move_app_to_applications(source: &Path) -> Result<()> {
             Ok(()) => {}
             Err(_) => {
                 privileged_copy_app(source, destination)?;
-                open_installed_app(destination)?;
+                schedule_relaunch_app(destination)?;
                 return Ok(());
             }
         }
@@ -1329,7 +1330,7 @@ fn move_app_to_applications(source: &Path) -> Result<()> {
     }
 
     verify_app_bundle(destination)?;
-    open_installed_app(destination)?;
+    schedule_relaunch_app(destination)?;
 
     Ok(())
 }
@@ -1377,21 +1378,41 @@ fn verify_app_bundle(app: &Path) -> Result<()> {
     Ok(())
 }
 
-fn open_installed_app(app: &Path) -> Result<()> {
-    let output = Command::new("/usr/bin/open")
-        .arg("-n")
+fn schedule_relaunch_app(app: &Path) -> Result<()> {
+    Command::new("/bin/sh")
+        .args([
+            "-c",
+            "sleep 1; exec /usr/bin/open -n \"$1\"",
+            "ntfs-manager-relaunch",
+        ])
         .arg(app)
-        .output()
-        .context("failed to launch app from Applications")?;
-
-    if !output.status.success() {
-        bail!(
-            "failed to open installed app: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
+        .spawn()
+        .context("failed to schedule app relaunch")?;
 
     Ok(())
+}
+
+fn acquire_single_instance_lock() -> Result<Option<fs::File>> {
+    let uid = unsafe { libc::getuid() };
+    let path = env::temp_dir().join(format!("ntfs-manager-menubar-{uid}.lock"));
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("failed to open instance lock {}", path.display()))?;
+
+    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if result == 0 {
+        return Ok(Some(file));
+    }
+
+    let error = std::io::Error::last_os_error();
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return Ok(None);
+    }
+
+    Err(error).with_context(|| format!("failed to lock {}", path.display()))
 }
 
 fn tray_template_icon() -> Result<Icon> {
@@ -1450,6 +1471,10 @@ fn tray_template_icon() -> Result<Icon> {
 
 fn main() -> Result<()> {
     platform::require_macos()?;
+
+    let Some(_instance_lock) = acquire_single_instance_lock()? else {
+        return Ok(());
+    };
 
     let mut builder = EventLoop::<UserEvent>::with_user_event();
     builder
