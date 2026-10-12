@@ -1397,6 +1397,7 @@ fn acquire_single_instance_lock() -> Result<Option<fs::File>> {
     let path = env::temp_dir().join(format!("ntfs-manager-menubar-{uid}.lock"));
     let file = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .open(&path)
